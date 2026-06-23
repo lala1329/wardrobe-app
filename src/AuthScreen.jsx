@@ -1,5 +1,4 @@
-import React, { useState } from "react";
-import { supabase } from "./supabaseClient";
+import React, { useState } from "react"; import { Eye, EyeOff } from "lucide-react"; import { supabase } from "./supabaseClient";
 
 export default function AuthScreen({ onAuthenticated }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
@@ -8,6 +7,7 @@ export default function AuthScreen({ onAuthenticated }) {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [confirmMessage, setConfirmMessage] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -40,13 +40,18 @@ export default function AuthScreen({ onAuthenticated }) {
         }
       }
     } catch (err) {
-      setError(translateAuthError(err.message));
+      setError(translateAuthError(err));
     } finally {
       setLoading(false);
     }
   }
 
-  function translateAuthError(message) {
+  function translateAuthError(err) {
+    const message =
+      (err && typeof err === "object" && err.message) ||
+      (typeof err === "string" ? err : "") ||
+      "Произошла неизвестная ошибка. Попробуйте ещё раз.";
+
     if (message.includes("Invalid login credentials")) {
       return "Неверный email или пароль";
     }
@@ -55,6 +60,9 @@ export default function AuthScreen({ onAuthenticated }) {
     }
     if (message.includes("Password should be at least")) {
       return "Пароль слишком короткий — минимум 6 символов";
+    }
+    if (message.includes("Email not confirmed")) {
+      return "Email не подтверждён — проверьте почту и перейдите по ссылке из письма";
     }
     return message;
   }
@@ -86,7 +94,7 @@ export default function AuthScreen({ onAuthenticated }) {
             className="mb-4 rounded-xl px-4 py-3 text-sm"
             style={{ backgroundColor: "#f0e6d4", color: "#6b5a3f" }}
           >
-            {error}
+            {typeof error === "string" ? error : "Произошла ошибка. Попробуйте ещё раз."}
           </div>
         )}
 
@@ -110,16 +118,27 @@ export default function AuthScreen({ onAuthenticated }) {
             <label className="text-xs uppercase tracking-wider mb-1.5 block" style={{ color: "#8a7d6a" }}>
               Пароль
             </label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full py-3 px-4 rounded-xl border text-sm outline-none"
-              style={{ backgroundColor: "#ffffff", borderColor: "#e3d8c4", color: "#2a2520" }}
-              placeholder="Минимум 6 символов"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full py-3 pl-4 pr-11 rounded-xl border text-sm outline-none"
+                style={{ backgroundColor: "#ffffff", borderColor: "#e3d8c4", color: "#2a2520" }}
+                placeholder="Минимум 6 символов"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2"
+                style={{ color: "#8a7d6a" }}
+                aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <button
