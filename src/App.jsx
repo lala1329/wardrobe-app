@@ -1826,6 +1826,30 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
   const [scenario, setScenario] = useState(DAY_TYPES[0].sub[0]);
   const [results, setResults] = useState(null);
   const [emptyState, setEmptyState] = useState(false);
+  const [weatherStatus, setWeatherStatus] = useState("loading"); // loading | success | denied | error
+
+  useEffect(() => {
+    let cancelled = false;
+    getUserLocation()
+      .then(({ lat, lon }) => fetchWeatherByCoords(lat, lon))
+      .then(({ temp: detectedTemp, rain: detectedRain }) => {
+        if (cancelled) return;
+        setTemp(detectedTemp);
+        setRain(detectedRain);
+        setWeatherStatus("success");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err && err.code === 1) {
+          setWeatherStatus("denied");
+        } else {
+          setWeatherStatus("error");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const totalItems = items.length;
   const activeDayType = DAY_TYPES.find((d) => d.id === dayType);
