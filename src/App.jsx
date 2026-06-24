@@ -302,9 +302,9 @@ const CATEGORY_TO_SLOT = {
 
 // С какими категориями вещь логически сочетается (для расчёта % совместимости)
 const PAIRS_WITH = {
-  tops: ["bottoms"], // верх сочетается с низом
+  tops: ["bottoms"],
   bottoms: ["tops"],
-  dresses: [], // платье — самостоятельный образ, не сочетается с верхом/низом напрямую
+  dresses: [],
   outerwear: ["tops", "bottoms", "dresses"],
   shoes: ["tops", "bottoms", "dresses"],
   bags: ["tops", "bottoms", "dresses"],
@@ -316,11 +316,9 @@ function colorsCompatible(colorIdA, colorIdB) {
   return colorIdA === colorIdB;
 }
 
-// Считает % вещей в гардеробе, с которыми данная вещь сочетается по цвету
 function calcMatchScore(item, allItems) {
   const pairCategories = PAIRS_WITH[item.categoryId] || [];
   if (pairCategories.length === 0) {
-    // У платьев считаем сочетаемость с обувью/сумками/аксессуарами/верхней одеждой
     const candidates = allItems.filter(
       (i) => i.id !== item.id && ["shoes", "bags", "accessories", "outerwear"].includes(i.categoryId)
     );
@@ -335,7 +333,6 @@ function calcMatchScore(item, allItems) {
   return Math.round((matches.length / candidates.length) * 100);
 }
 
-// Подсказка, что докупить, если процент низкий
 function suggestForLowMatch(item) {
   const categoryLabel =
     item.categoryId === "tops" || item.categoryId === "dresses"
@@ -346,18 +343,16 @@ function suggestForLowMatch(item) {
   return `Добавьте в гардероб нейтральный ${categoryLabel} (чёрный, белый, бежевый, серый) — это поможет этой вещи сочетаться с большим количеством образов.`;
 }
 
-// Строит поисковый запрос на Pinterest для идей, что докупить к этой вещи
 function buildPinterestSearchUrl(item) {
   const query = `${item.colorLabel} ${item.subcategory} с чем носить сочетание`;
   return `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
 }
 
-// Текущий календарный сезон по дате устройства (без геолокации — обычный системный календарь)
 function getCurrentSeason() {
-  const month = new Date().getMonth() + 1; // 1-12
+  const month = new Date().getMonth() + 1;
   if (month === 12 || month === 1 || month === 2) return "winter";
   if (month >= 6 && month <= 8) return "summer";
-  return "demi"; // март-май, сентябрь-ноябрь
+  return "demi";
 }
 
 function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) {
@@ -369,10 +364,6 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
 
   const currentSeason = getCurrentSeason();
 
-  // Вещи "деми" и вещи без указанного сезона подходят всегда.
-  // Вещи текущего календарного сезона — в приоритете.
-  // Если подходящих по сезону вещей не нашлось, используем все — лучше предложить
-  // что-то, чем оставить слот пустым.
   function prioritizeBySeason(pool) {
     const seasonMatch = pool.filter(
       (i) => i.seasonId === currentSeason || i.seasonId === "demi" || !i.seasonId
@@ -386,8 +377,6 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   const needsOuterwear = temp < 18 || rain;
   const warmthLevel = temp < 0 ? "heavy" : temp < 10 ? "mid" : temp < 18 ? "light" : "none";
 
-  // Зафиксированные вещи группируются по слотам — если в одном слоте несколько вещей,
-  // на каждый сгенерированный вариант берётся случайная из них (никто не теряется)
   const pinnedBySlot = {};
   pinnedItems.forEach((item) => {
     const slot = CATEGORY_TO_SLOT[item.categoryId];
@@ -412,11 +401,9 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
         )
     );
   }
-  // В тёплую погоду закрытая зимняя обувь (сапоги, ботинки, угги) исключается
   if (warmthLevel === "none") {
     shoesPool = shoesPool.filter((s) => !["Сапоги", "Ботинки", "Угги"].includes(s.subcategory));
   }
-  // В холодную погоду открытая летняя обувь исключается
   if (warmthLevel === "heavy" || warmthLevel === "mid") {
     shoesPool = shoesPool.filter(
       (s) => !["Сандалии / мюли", "Шлёпанцы / вьетнамки", "Эспадрильи"].includes(s.subcategory)
@@ -508,8 +495,6 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   return { outfit, missing, needsOuterwear, warmthLevel, pinnedSlots };
 }
 
-// ---- Цветотип: какие цвета вещей красиво оттеняют глаза/волосы ----
-// Это НЕ фильтр — только повод для комплимента в описании, варианты не убираются.
 const EYE_FLATTERING_COLORS = {
   brown: ["green", "yellow", "red", "beige"],
   blue: ["blue", "navy", "yellow", "beige"],
@@ -552,7 +537,6 @@ function findColortypeNote(outfit, profile) {
   return null;
 }
 
-// Короткое описание образа в свободной форме
 const STYLE_PHRASES = [
   "Лёгкий и сбалансированный образ",
   "Спокойное, уверенное сочетание",
@@ -573,7 +557,6 @@ function describeOutfit(outfit, { temp, rain }) {
   return parts.join(", ") + ".";
 }
 
-// ---- Генерация нескольких вариантов образа ----
 function pickOutfits(items, params, profile, count = 3) {
   const results = [];
   const seenSignatures = new Set();
@@ -602,7 +585,7 @@ function pickOutfits(items, params, profile, count = 3) {
 }
 
 export default function App() {
-  const [session, setSession] = useState(undefined); // undefined = проверяем, null = не залогинен, объект = залогинен
+  const [session, setSession] = useState(undefined);
   const [screen, setScreen] = useState("wardrobe");
   const [items, setItems] = useState([]);
   const [activeCategory, setActiveCategory] = useState("all");
@@ -614,9 +597,9 @@ export default function App() {
   const [detailItemId, setDetailItemId] = useState(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [saveError, setSaveError] = useState(null);
-  const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved"
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [storageDiagnostic, setStorageDiagnostic] = useState(null);
 
-  // Проверяем текущую сессию при запуске, и слушаем изменения (вход/выход)
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session ?? null);
@@ -625,7 +608,6 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       if (!newSession) {
-        // При выходе — очищаем всё локальное состояние
         setItems([]);
         setProfile(null);
         setPinnedIds([]);
@@ -636,7 +618,6 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // Загрузка профиля и гардероба из базы данных, когда известен пользователь
   useEffect(() => {
     if (!session?.user) return;
     let cancelled = false;
@@ -663,7 +644,6 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
-  // Сохранение профиля при каждом изменении
   useEffect(() => {
     if (!isLoaded || !profile || !session?.user) return;
     let cancelled = false;
@@ -712,7 +692,6 @@ export default function App() {
     if (!session?.user) return;
     setSaveStatus("saving");
     try {
-      // Сначала загружаем все фото в Storage, получаем настоящие ссылки
       const photoUrls = [];
       for (let i = 0; i < (item.photos || []).length; i++) {
         const url = await uploadPhoto(session.user.id, item.photos[i], `photo-${i}`);
@@ -748,7 +727,6 @@ export default function App() {
   }
 
   async function updateItemHandler(id, updates) {
-    // Если среди обновлений есть новые фото в формате base64 (data URL) — сначала загружаем их в Storage
     let finalUpdates = { ...updates };
     if (updates.photos) {
       const uploadedPhotos = [];
@@ -1239,7 +1217,6 @@ function ItemCard({ item, allItems, onRemove, pickMode, pinned, onTogglePin, onO
   );
 }
 
-// ---- Детальная карточка вещи: полная информация + % сочетаемости + подсказка ----
 function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const fileInputRef = useRef(null);
@@ -1305,7 +1282,6 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
         </div>
 
         <div className="px-5 pt-5 space-y-5">
-          {/* Фото */}
           {photos.length > 0 ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
               {photos.map((p, idx) => (
@@ -1351,7 +1327,6 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
             onChange={handleAddPhotos}
           />
 
-          {/* Процент сочетаемости */}
           <div className="bg-white rounded-2xl border border-[#e9ddc8] p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs uppercase tracking-wider text-[#8a7d6a]">Сочетаемость с гардеробом</span>
@@ -1376,8 +1351,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
             )}
           </div>
 
-          {/* Поиск идей, что докупить к этой вещи — доступно всегда, независимо от процента */}
-          <a
+          
             href={buildPinterestSearchUrl(item)}
             target="_blank"
             rel="noopener noreferrer"
@@ -1387,7 +1361,6 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
             📌 Найти, что докупить — на Pinterest
           </a>
 
-          {/* Основная информация */}
           <div className="bg-white rounded-2xl border border-[#e9ddc8] divide-y divide-[#f0e6d4]">
             <DetailRow label="Категория" value={item.subcategory} />
             <DetailRow
@@ -1413,7 +1386,6 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
             </div>
           )}
 
-          {/* Удаление */}
           {!confirmingDelete ? (
             <button
               onClick={() => setConfirmingDelete(true)}
@@ -1483,7 +1455,6 @@ function AddItemSheet({ onClose, onAdd }) {
       compressImage(file)
         .then((compressed) => setPhotos((prev) => [...prev, compressed]))
         .catch(() => {
-          // если сжатие не удалось — пробуем добавить исходный файл как запасной вариант
           const reader = new FileReader();
           reader.onload = () => setPhotos((prev) => [...prev, reader.result]);
           reader.readAsDataURL(file);
@@ -1506,7 +1477,7 @@ function AddItemSheet({ onClose, onAdd }) {
       colorHex: color.hex,
       seasonId,
       photos,
-      photo: photos[0] || null, // для обратной совместимости с местами, где используется одно фото
+      photo: photos[0] || null,
       name: name.trim(),
       brand: brand.trim(),
       note: note.trim(),
@@ -1553,7 +1524,6 @@ function AddItemSheet({ onClose, onAdd }) {
         </div>
 
         <div className="px-5 pt-5 pb-6 space-y-6">
-          {/* Фото */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
               Фото <span className="text-[#c9bb9f]">— можно несколько</span>
@@ -1608,7 +1578,6 @@ function AddItemSheet({ onClose, onAdd }) {
             />
           </div>
 
-          {/* Категория */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Категория</label>
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1634,7 +1603,6 @@ function AddItemSheet({ onClose, onAdd }) {
             </div>
           </div>
 
-          {/* Подкатегория */}
           {category && (
             <div>
               <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Тип</label>
@@ -1658,7 +1626,6 @@ function AddItemSheet({ onClose, onAdd }) {
             </div>
           )}
 
-          {/* Цвет */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Цвет</label>
             <div className="mt-2 grid grid-cols-6 gap-2.5">
@@ -1691,7 +1658,6 @@ function AddItemSheet({ onClose, onAdd }) {
             {color && <p className="text-xs text-[#8a7d6a] mt-1.5">{color.label}</p>}
           </div>
 
-          {/* Сезон */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
               Сезон <span className="text-[#c9bb9f]">— по желанию</span>
@@ -1730,7 +1696,6 @@ function AddItemSheet({ onClose, onAdd }) {
             </p>
           </div>
 
-          {/* Название, бренд, заметка — по желанию, помогают находить вещь через поиск */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
               Название <span className="text-[#c9bb9f]">— по желанию</span>
@@ -1817,7 +1782,6 @@ function AddItemSheet({ onClose, onAdd }) {
   );
 }
 
-// ---- Экран подбора образа дня ----
 function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
   const [temp, setTemp] = useState(12);
   const [rain, setRain] = useState(false);
@@ -1902,7 +1866,6 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
         </section>
       )}
 
-      {/* Температура */}
       <section className="mb-5">
         <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Температура</label>
         <div className="mt-2 flex items-center gap-2.5">
@@ -1946,7 +1909,6 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
         </div>
       </section>
 
-      {/* Осадки */}
       <section className="mb-5">
         <button
           onClick={() => setRain((r) => !r)}
@@ -1978,7 +1940,6 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
         </button>
       </section>
 
-      {/* Тип дня */}
       <section className="mb-4">
         <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Тип дня</label>
         <div className="mt-2 grid grid-cols-2 gap-2">
@@ -2000,7 +1961,6 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
         </div>
       </section>
 
-      {/* Конкретный сценарий внутри типа дня */}
       {activeDayType && (
         <section className="mb-6">
           <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Уточните событие</label>
@@ -2130,7 +2090,6 @@ function OutfitVariant({ index, result }) {
   );
 }
 
-// ---- Онбординг: только пол, всё остальное — позже в профиле ----
 function OnboardingScreen({ onDone }) {
   const [gender, setGender] = useState(null);
 
@@ -2233,7 +2192,6 @@ function SwatchButton({ color, active, onClick }) {
   );
 }
 
-// ---- Экран профиля: просмотр и редактирование, включая необязательные поля ----
 function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
   const [editing, setEditing] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
@@ -2331,7 +2289,6 @@ function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
           </div>
         </FieldBlock>
 
-        {/* Возраст — необязательное поле, доступно только здесь */}
         <FieldBlock label="Возраст (по желанию)">
           <div className="flex flex-wrap gap-2">
             <PillButton
