@@ -1350,6 +1350,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
               </div>
             )}
           </div>
+            <a
 
           
             href={buildPinterestSearchUrl(item)}
