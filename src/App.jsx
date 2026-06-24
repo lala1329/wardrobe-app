@@ -1377,7 +1377,8 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
           </div>
 
           
-            href={buildPinterestSearchUrl(item)}
+            <a
+              href={buildPinterestSearchUrl(item)}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 w-full py-3 rounded-full text-sm font-medium border"
