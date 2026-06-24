@@ -253,6 +253,42 @@ const SCENARIO_RULES = {
   "Бег": { extraExclude: ["Украшения", "Шапка", "Сумка через плечо", "Клатч", "Тоут"] },
 };
 
+// ---- Получение погоды по геолокации через Open-Meteo (бесплатный API, без ключа) ----
+function fetchWeatherByCoords(lat, lon) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code`;
+  return fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error("Не удалось получить погоду");
+      return res.json();
+    })
+    .then((data) => {
+      const current = data.current;
+      const temp = Math.round(current.temperature_2m);
+      const precipitation = current.precipitation || 0;
+      const weatherCode = current.weather_code;
+      // Коды осадков по WMO: 51-67 дождь/мокрый снег, 71-77 снег, 80-99 ливни/град
+      const isPrecipCode = (weatherCode >= 51 && weatherCode <= 99) || precipitation > 0;
+      return { temp, rain: isPrecipCode };
+    });
+}
+
+function getUserLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Геолокация не поддерживается этим браузером"));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({ lat: position.coords.latitude, lon: position.coords.longitude });
+      },
+      (error) => {
+        reject(error);
+      },
+      { timeout: 10000 }
+    );
+  });
+}
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
