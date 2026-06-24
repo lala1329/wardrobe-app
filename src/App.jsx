@@ -12,7 +12,6 @@ import {
   uploadPhoto,
 } from "./dataStore";
 
-// ---- Категории и подкатегории ----
 const CATEGORIES = [
   {
     id: "tops",
@@ -122,11 +121,10 @@ const COLORS = [
   { id: "multi", label: "Принт / разноцветный", hex: "linear-gradient(135deg,#a8362a,#cfa83e,#5b7ea0)" },
 ];
 
-// ---- Данные профиля пользователя ----
 const GENDERS = ["Женский", "Мужской", "Не указывать"];
 
 const CLOTHING_SIZES = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
-const SHOE_SIZES_EU = Array.from({ length: 22 }, (_, i) => 34 + i); // 34–55
+const SHOE_SIZES_EU = Array.from({ length: 22 }, (_, i) => 34 + i);
 
 const EYE_COLORS = [
   { id: "brown", label: "Карие", hex: "#5b3a21" },
@@ -147,7 +145,6 @@ const HAIR_COLORS = [
 
 const AGE_RANGES = ["До 18", "18–24", "25–34", "35–44", "45–54", "55+"];
 
-// ---- Валюты для цены вещи (AZN по умолчанию) ----
 const CURRENCIES = [
   { id: "azn", symbol: "₼", label: "AZN" },
   { id: "rub", symbol: "₽", label: "RUB" },
@@ -185,7 +182,6 @@ const DAY_TYPES = [
 
 const NEUTRAL_COLORS = ["black", "white", "cream", "beige", "gray", "graphite", "navy", "brown", "camel", "khaki", "silver"];
 
-// Какие подкатегории допустимы для каждого типа дня (фильтр-исключение)
 const DAY_TYPE_EXCLUDE = {
   business: [
     "Шорты",
@@ -204,7 +200,6 @@ const DAY_TYPE_EXCLUDE = {
   casual: [],
 };
 
-// Уточнения внутри сценария: либо доп. исключения, либо смягчение базового правила
 const SCENARIO_RULES = {
   "Поход": {
     allowBack: ["Кроссовки"],
@@ -253,7 +248,6 @@ const SCENARIO_RULES = {
   "Бег": { extraExclude: ["Украшения", "Шапка", "Сумка через плечо", "Клатч", "Тоут"] },
 };
 
-// ---- Получение погоды по геолокации через Open-Meteo (бесплатный API, без ключа) ----
 function fetchWeatherByCoords(lat, lon) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code`;
   return fetch(url)
@@ -266,7 +260,6 @@ function fetchWeatherByCoords(lat, lon) {
       const temp = Math.round(current.temperature_2m);
       const precipitation = current.precipitation || 0;
       const weatherCode = current.weather_code;
-      // Коды осадков по WMO: 51-67 дождь/мокрый снег, 71-77 снег, 80-99 ливни/град
       const isPrecipCode = (weatherCode >= 51 && weatherCode <= 99) || precipitation > 0;
       return { temp, rain: isPrecipCode };
     });
@@ -289,12 +282,11 @@ function getUserLocation() {
     );
   });
 }
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// Сжимает изображение перед сохранением — ограничивает максимальную сторону и качество,
-// чтобы фото не превышали лимит хранилища (особенно важно при нескольких фото на вещь)
 function compressImage(file, maxSize = 800, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -324,8 +316,6 @@ function compressImage(file, maxSize = 800, quality = 0.7) {
   });
 }
 
-// ---- Логика подбора образа по правилам ----
-// Категория вещи -> слот в образе
 const CATEGORY_TO_SLOT = {
   outerwear: "outerwear",
   dresses: "dress",
@@ -336,7 +326,6 @@ const CATEGORY_TO_SLOT = {
   accessories: "accessory",
 };
 
-// С какими категориями вещь логически сочетается (для расчёта % совместимости)
 const PAIRS_WITH = {
   tops: ["bottoms"],
   bottoms: ["tops"],
@@ -1386,7 +1375,6 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
               </div>
             )}
           </div>
-            <a
 
           
             href={buildPinterestSearchUrl(item)}
@@ -1826,7 +1814,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
   const [scenario, setScenario] = useState(DAY_TYPES[0].sub[0]);
   const [results, setResults] = useState(null);
   const [emptyState, setEmptyState] = useState(false);
-  const [weatherStatus, setWeatherStatus] = useState("loading"); // loading | success | denied | error
+  const [weatherStatus, setWeatherStatus] = useState("loading");
 
   useEffect(() => {
     let cancelled = false;
@@ -1891,7 +1879,11 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
           )}
         </div>
         <p className="text-sm text-[#8a7d6a] mt-1">
-          Температуру и осадки пока вводите вручную — в приложении это подставится из датчиков телефона. Сезон определяется автоматически по дате.
+          {weatherStatus === "loading" && "Определяем погоду по вашему местоположению..."}
+          {weatherStatus === "success" && "Температура и осадки подставлены автоматически по вашему местоположению. Можно поправить вручную."}
+          {weatherStatus === "denied" && "Доступ к местоположению не разрешён — введите температуру и осадки вручную."}
+          {weatherStatus === "error" && "Не удалось определить погоду — введите температуру и осадки вручную."}
+          {" "}Сезон определяется автоматически по дате.
         </p>
       </header>
 
