@@ -1398,6 +1398,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
           </div>
 
           
+            <a
             href={buildPinterestSearchUrl(item)}
             target="_blank"
             rel="noopener noreferrer"
