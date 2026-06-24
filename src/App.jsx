@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Plus, X, Shirt, Footprints, ShoppingBag, Gem, Snowflake, Sun, CloudSun, Search, LayoutGrid, CloudRain, Briefcase, Coffee, Dumbbell, PartyPopper, Sparkles, RefreshCw, Calendar, User, Ruler, Eye, Check, Camera, Columns3, PersonStanding, Umbrella, LogOut } from "lucide-react";
+import { Plus, X, Shirt, Footprints, ShoppingBag, Gem, Snowflake, Sun, CloudSun, Search, LayoutGrid, CloudRain, Briefcase, Coffee, Dumbbell, PartyPopper, Sparkles, RefreshCw, Calendar, User, Ruler, Eye, Check, Camera, Columns3, PersonStanding, Umbrella, LogOut, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import AuthScreen from "./AuthScreen";
 import {
@@ -615,6 +615,7 @@ export default function App() {
   const [items, setItems] = useState([]);
   const [activeCategory, setActiveCategory] = useState("all");
   const [showAddSheet, setShowAddSheet] = useState(false);
+  const [editItemId, setEditItemId] = useState(null);
   const [query, setQuery] = useState("");
   const [profile, setProfile] = useState(null);
   const [pickMode, setPickMode] = useState(false);
@@ -893,10 +894,10 @@ export default function App() {
             saveStatus={saveStatus}
           />
 
-          <div className="flex-1 flex max-w-2xl w-full mx-auto px-4 pb-24 pt-1 gap-3 min-h-0 overflow-y-auto">
+          <div className="flex-1 flex max-w-2xl w-full mx-auto px-4 pt-1 gap-3 min-h-0 overflow-y-auto">
             <CategoryRail active={activeCategory} setActive={setActiveCategory} />
 
-            <main className="flex-1 min-w-0">
+            <main className="flex-1 min-w-0 pb-32">
               {filtered.length === 0 ? (
                 <EmptyState hasAny={items.length > 0} />
               ) : (
@@ -958,6 +959,17 @@ export default function App() {
         <AddItemSheet onClose={() => setShowAddSheet(false)} onAdd={addItem} />
       )}
 
+      {editItemId && (
+        <AddItemSheet
+          editItem={items.find((i) => i.id === editItemId)}
+          onClose={() => setEditItemId(null)}
+          onSave={(updates) => {
+            updateItemHandler(editItemId, updates);
+            setEditItemId(null);
+          }}
+        />
+      )}
+
       {detailItemId && (
         <ItemDetailSheet
           item={items.find((i) => i.id === detailItemId)}
@@ -968,6 +980,10 @@ export default function App() {
             setDetailItemId(null);
           }}
           onUpdate={(updates) => updateItemHandler(detailItemId, updates)}
+          onEdit={(item) => {
+            setDetailItemId(null);
+            setEditItemId(item.id);
+          }}
         />
       )}
 
@@ -1242,7 +1258,7 @@ function ItemCard({ item, allItems, onRemove, pickMode, pinned, onTogglePin, onO
   );
 }
 
-function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
+function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const fileInputRef = useRef(null);
   if (!item) return null;
@@ -1288,11 +1304,11 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
       : "Сложно сочетать с тем, что есть";
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col justify-end">
+    <div className="absolute inset-0 z-50 flex flex-col justify-end" style={{ overflowX: "hidden", touchAction: "pan-y" }}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
-        className="relative rounded-t-3xl max-h-[88%] overflow-y-auto pb-8 animate-[slideUp_0.25s_ease-out]"
-        style={{ backgroundColor: "#f6f1e8", colorScheme: "light" }}
+        className="relative rounded-t-3xl max-h-[88%] overflow-y-auto overflow-x-hidden pb-8 animate-[slideUp_0.25s_ease-out]"
+        style={{ backgroundColor: "#f6f1e8", colorScheme: "light", touchAction: "pan-y" }}
       >
         <style>{`@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
 
@@ -1301,9 +1317,14 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
           style={{ backgroundColor: "#f6f1e8", colorScheme: "light" }}
         >
           <h2 className="text-lg font-medium truncate pr-3">{item.name || item.subcategory}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-[#ebe1cf] flex items-center justify-center shrink-0">
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => onEdit(item)} className="w-8 h-8 rounded-full bg-[#ebe1cf] flex items-center justify-center" aria-label="Редактировать вещь">
+              <Pencil size={15} />
+            </button>
+            <button onClick={onClose} className="w-8 h-8 rounded-full bg-[#ebe1cf] flex items-center justify-center" aria-label="Закрыть">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 pt-5 space-y-5">
@@ -1377,8 +1398,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
           </div>
 
           
-            <a
-              href={buildPinterestSearchUrl(item)}
+            href={buildPinterestSearchUrl(item)}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 w-full py-3 rounded-full text-sm font-medium border"
@@ -1415,8 +1435,9 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate }) {
           {!confirmingDelete ? (
             <button
               onClick={() => setConfirmingDelete(true)}
-              className="w-full py-3 rounded-full text-sm font-medium border border-[#e3d8c4] text-[#a8362a]"
+              className="w-full py-3 rounded-full text-sm font-medium border border-[#e3d8c4] text-[#a8362a] flex items-center justify-center gap-1.5"
             >
+              <Trash2 size={15} />
               Удалить вещь
             </button>
           ) : (
@@ -1456,19 +1477,21 @@ function DetailRow({ label, value, swatch }) {
   );
 }
 
-function AddItemSheet({ onClose, onAdd }) {
+function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
+  const isEditing = !!editItem;
   const [step, setStep] = useState(1);
-  const [categoryId, setCategoryId] = useState(null);
-  const [subcategory, setSubcategory] = useState(null);
-  const [colorId, setColorId] = useState(null);
-  const [seasonId, setSeasonId] = useState(null);
-  const [photos, setPhotos] = useState([]);
-  const [name, setName] = useState("");
-  const [brand, setBrand] = useState("");
-  const [note, setNote] = useState("");
-  const [size, setSize] = useState("");
-  const [price, setPrice] = useState("");
-  const [currencyId, setCurrencyId] = useState("azn");
+  const [categoryId, setCategoryId] = useState(editItem?.categoryId || null);
+  const [subcategory, setSubcategory] = useState(editItem?.subcategory || null);
+  const [colorId, setColorId] = useState(editItem?.colorId || null);
+  const [seasonId, setSeasonId] = useState(editItem?.seasonId || null);
+  const [photos, setPhotos] = useState(editItem?.photos || []);
+  const [name, setName] = useState(editItem?.name || "");
+  const [brand, setBrand] = useState(editItem?.brand || "");
+  const [note, setNote] = useState(editItem?.note || "");
+  const [size, setSize] = useState(editItem?.size || "");
+  const [price, setPrice] = useState(editItem?.price != null ? String(editItem.price) : "");
+  const [currencyId, setCurrencyId] = useState(editItem?.currencyId || "azn");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef(null);
 
   const category = CATEGORIES.find((c) => c.id === categoryId);
@@ -1494,8 +1517,9 @@ function AddItemSheet({ onClose, onAdd }) {
   }
 
   function handleSubmit() {
-    if (!categoryId || !subcategory || !colorId) return;
-    onAdd({
+    if (!categoryId || !subcategory || !colorId || isSubmitting) return;
+    setIsSubmitting(true);
+    const payload = {
       categoryId,
       subcategory,
       colorId,
@@ -1510,7 +1534,12 @@ function AddItemSheet({ onClose, onAdd }) {
       size: size.trim(),
       price: price === "" ? null : Number(price),
       currencyId,
-    });
+    };
+    if (isEditing) {
+      onSave(payload);
+    } else {
+      onAdd(payload);
+    }
   }
 
   const canGoStep2 = !!categoryId;
@@ -1518,23 +1547,23 @@ function AddItemSheet({ onClose, onAdd }) {
   const canSubmit = canGoStep3 && !!colorId;
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col justify-end">
+    <div className="absolute inset-0 z-50 flex flex-col justify-end" style={{ overflowX: "hidden", touchAction: "pan-y" }}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
-        className="relative rounded-t-3xl max-h-[88%] overflow-y-auto pb-8 animate-[slideUp_0.25s_ease-out]"
-        style={{ backgroundColor: "#f6f1e8", colorScheme: "light" }}
+        className="relative rounded-t-3xl max-h-[88%] overflow-y-auto overflow-x-hidden pb-8 animate-[slideUp_0.25s_ease-out]"
+        style={{ backgroundColor: "#f6f1e8", colorScheme: "light", touchAction: "pan-y" }}
       >
         <style>{`@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
 
         <div className="sticky top-0 px-5 pt-4 pb-3 border-b border-[#e9ddc8] flex items-center justify-between" style={{ backgroundColor: "#f6f1e8" }}>
-          <h2 className="text-lg font-medium">Новая вещь</h2>
+          <h2 className="text-lg font-medium">{isEditing ? "Редактировать вещь" : "Новая вещь"}</h2>
           <div className="flex items-center gap-2">
             <button
               onClick={handleSubmit}
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               className="w-8 h-8 rounded-full flex items-center justify-center"
               style={
-                canSubmit
+                canSubmit && !isSubmitting
                   ? { backgroundColor: "#e0563a", color: "#ffffff" }
                   : { backgroundColor: "#ebe1cf", color: "#a89a82" }
               }
@@ -1587,9 +1616,9 @@ function AddItemSheet({ onClose, onAdd }) {
             {photos.length === 0 && (
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="mt-2 w-full aspect-[4/3] rounded-2xl border-2 border-dashed border-[#d9c9ac] bg-[#fdfbf7] flex flex-col items-center justify-center gap-2 overflow-hidden"
+                className="mt-2 w-full h-28 rounded-2xl border-2 border-dashed border-[#d9c9ac] bg-[#fdfbf7] flex flex-col items-center justify-center gap-1.5 overflow-hidden"
               >
-                <Plus size={22} className="text-[#a89a82]" />
+                <Plus size={20} className="text-[#a89a82]" />
                 <span className="text-sm text-[#a89a82]">Загрузить фото вещи</span>
               </button>
             )}
