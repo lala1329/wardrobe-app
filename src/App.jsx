@@ -93,6 +93,30 @@ const SEASONS = [
   { id: "summer", label: "Лето", icon: Sun },
 ];
 
+const SILHOUETTES = [
+  { id: "fitted", label: "Облегающий" },
+  { id: "regular", label: "Обычный" },
+  { id: "loose", label: "Свободный" },
+  { id: "oversized", label: "Оверсайз" },
+];
+
+const LENGTHS = [
+  { id: "mini", label: "Мини" },
+  { id: "midi", label: "Миди" },
+  { id: "maxi", label: "Макси" },
+  { id: "short", label: "Короткий" },
+  { id: "regular", label: "Обычный" },
+  { id: "long", label: "Длинный" },
+];
+
+const STYLES = [
+  { id: "casual", label: "Повседневный" },
+  { id: "classic", label: "Классический" },
+  { id: "romantic", label: "Романтичный" },
+  { id: "sporty", label: "Спортивный" },
+  { id: "business", label: "Деловой" },
+];
+
 const COLORS = [
   { id: "black", label: "Чёрный", hex: "#1a1a1a" },
   { id: "white", label: "Белый", hex: "#fafafa" },
@@ -367,12 +391,32 @@ const PAIRS_WITH = {
   accessories: ["tops", "bottoms", "dresses"],
 };
 
-function colorsCompatible(colorIdA, colorIdB) {
-  if (NEUTRAL_COLORS.includes(colorIdA) || NEUTRAL_COLORS.includes(colorIdB)) return true;
-  return colorIdA === colorIdB;
+// Возвращает все цвета вещи: основной + цвета принта (если есть узор/горошек/клетка и т.п.)
+function getItemColors(item) {
+  const colors = [item.colorId];
+  if (Array.isArray(item.patternColorIds)) {
+    item.patternColorIds.forEach((c) => {
+      if (c && !colors.includes(c)) colors.push(c);
+    });
+  }
+  return colors;
 }
 
-// Считает % вещей в гардеробе, с которыми данная вещь сочетается по цвету
+// Две вещи считаются сочетаемыми, если ХОТЯ БЫ ОДНА пара цветов между ними подходит
+// (нейтральный цвет с чем угодно, либо совпадающие цвета). Учитывает принт обеих вещей.
+function colorsCompatible(itemA, itemB) {
+  const colorsA = getItemColors(itemA);
+  const colorsB = getItemColors(itemB);
+  for (const cA of colorsA) {
+    for (const cB of colorsB) {
+      if (NEUTRAL_COLORS.includes(cA) || NEUTRAL_COLORS.includes(cB)) return true;
+      if (cA === cB) return true;
+    }
+  }
+  return false;
+}
+
+// Считает % вещей в гардеробе, с которыми данная вещь сочетается по цвету (включая принт)
 function calcMatchScore(item, allItems) {
   const pairCategories = PAIRS_WITH[item.categoryId] || [];
   if (pairCategories.length === 0) {
@@ -381,13 +425,13 @@ function calcMatchScore(item, allItems) {
       (i) => i.id !== item.id && ["shoes", "bags", "accessories", "outerwear"].includes(i.categoryId)
     );
     if (candidates.length === 0) return null;
-    const matches = candidates.filter((i) => colorsCompatible(item.colorId, i.colorId));
+    const matches = candidates.filter((i) => colorsCompatible(item, i));
     return Math.round((matches.length / candidates.length) * 100);
   }
 
   const candidates = allItems.filter((i) => i.id !== item.id && pairCategories.includes(i.categoryId));
   if (candidates.length === 0) return null;
-  const matches = candidates.filter((i) => colorsCompatible(item.colorId, i.colorId));
+  const matches = candidates.filter((i) => colorsCompatible(item, i));
   return Math.round((matches.length / candidates.length) * 100);
 }
 
@@ -498,7 +542,22 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
     );
   }
 
-  const dressPool = usable("dresses");
+  // Честная фильтрация по теплоте: то, что AI или сам пользователь отметил как
+  // "Зима" (тёплая, плотная вещь) не предлагается в жару, и наоборот — летние лёгкие
+  // вещи не предлагаются в холод. Это отдельно от "сезона по календарю" выше.
+  function filterByWarmth(pool) {
+    if (warmthLevel === "none") {
+      // жарко — зимние тёплые вещи не годятся
+      return pool.filter((i) => i.seasonId !== "winter");
+    }
+    if (warmthLevel === "heavy" || warmthLevel === "mid") {
+      // холодно — летние лёгкие вещи не годятся
+      return pool.filter((i) => i.seasonId !== "summer");
+    }
+    return pool; // light/умеренно — подходит почти всё
+  }
+
+  const dressPool = filterByWarmth(usable("dresses"));
   const formalScenarios = ["Свадьба", "Торжественный приём"];
   const dressChanceThreshold = formalScenarios.includes(scenario) ? 0.25 : 0.6;
   const wantsDress =
@@ -509,21 +568,39 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
     dressPool.length > 0 &&
     Math.random() > dressChanceThreshold;
 
-  const topPool = usable("tops");
-  const bottomPool = usable("bottoms");
+  const topPool = filterByWarmth(usable("tops"));
+  const bottomPool = filterByWarmth(usable("bottoms"));
   const bagPool = usable("bags");
   const accessoryPool = usable("accessories");
 
-  function pickColorAware(pool, anchorColorId) {
+  // Стили, которые плохо сочетаются друг с другом (например деловой и спортивный) —
+  // мягкое правило: используется только когда выбор есть, не оставляет слот пустым.
+  const STYLE_CONFLICTS = {
+    business: ["sporty"],
+    sporty: ["business", "romantic"],
+    romantic: ["sporty"],
+  };
+
+  function stylesConflict(styleA, styleB) {
+    if (!styleA || !styleB) return false;
+    return (STYLE_CONFLICTS[styleA] || []).includes(styleB);
+  }
+
+  function pickColorAware(pool, anchorItem) {
     if (pool.length === 0) return null;
-    if (!anchorColorId) return pool[Math.floor(Math.random() * pool.length)];
-    const isAnchorNeutral = NEUTRAL_COLORS.includes(anchorColorId);
-    const compatible = pool.filter((p) => {
-      if (NEUTRAL_COLORS.includes(p.colorId)) return true;
+    if (!anchorItem) return pool[Math.floor(Math.random() * pool.length)];
+    const anchorColors = getItemColors(anchorItem);
+    const isAnchorNeutral = anchorColors.some((c) => NEUTRAL_COLORS.includes(c));
+    const colorCompatiblePool = pool.filter((p) => {
+      const pColors = getItemColors(p);
+      if (pColors.some((c) => NEUTRAL_COLORS.includes(c))) return true;
       if (isAnchorNeutral) return true;
-      return p.colorId === anchorColorId;
+      return pColors.some((c) => anchorColors.includes(c));
     });
-    const finalPool = compatible.length > 0 ? compatible : pool;
+    const basePool = colorCompatiblePool.length > 0 ? colorCompatiblePool : pool;
+    // Среди уже цветово-совместимых вариантов стараемся избежать конфликта стилей
+    const styleCompatible = basePool.filter((p) => !stylesConflict(anchorItem.styleId, p.styleId));
+    const finalPool = styleCompatible.length > 0 ? styleCompatible : basePool;
     return finalPool[Math.floor(Math.random() * finalPool.length)];
   }
 
@@ -535,7 +612,7 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
     }
     if (!pinnedSlots.includes("bottom")) {
       outfit.bottom = outfit.top
-        ? pickColorAware(bottomPool, outfit.top.colorId)
+        ? pickColorAware(bottomPool, outfit.top)
         : bottomPool[Math.floor(Math.random() * bottomPool.length)] || null;
     }
   }
@@ -543,21 +620,21 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   const anchor = outfit.dress || outfit.bottom || outfit.top;
 
   if (!pinnedSlots.includes("outerwear") && needsOuterwear) {
-    outfit.outerwear = pickColorAware(outerwearPool, anchor?.colorId);
+    outfit.outerwear = pickColorAware(outerwearPool, anchor);
   }
   if (!pinnedSlots.includes("shoes")) {
-    outfit.shoes = pickColorAware(shoesPool, anchor?.colorId);
+    outfit.shoes = pickColorAware(shoesPool, anchor);
   }
   if (!pinnedSlots.includes("bag")) {
-    outfit.bag = bagPool.length ? pickColorAware(bagPool, anchor?.colorId) : null;
+    outfit.bag = bagPool.length ? pickColorAware(bagPool, anchor) : null;
   }
   if (!pinnedSlots.includes("accessory")) {
-    outfit.accessory = accessoryPool.length ? pickColorAware(accessoryPool, anchor?.colorId) : null;
+    outfit.accessory = accessoryPool.length ? pickColorAware(accessoryPool, anchor) : null;
   }
 
   const missing = [];
-  if (!outfit.dress && !outfit.top) missing.push("верх");
-  if (!outfit.dress && !outfit.bottom) missing.push("низ");
+  if (!outfit.dress && !outfit.top) missing.push("верх для такой погоды");
+  if (!outfit.dress && !outfit.bottom) missing.push("низ для такой погоды");
   if (!outfit.shoes) missing.push("обувь");
   if (needsOuterwear && !outfit.outerwear) missing.push("верхняя одежда для такой погоды");
 
@@ -574,7 +651,8 @@ function pickEveningLayer(items, { currentTemp, coldestLater, outfit, dayType })
   if (drop < COLD_DROP_THRESHOLD) return null;
 
   const baseExclude = DAY_TYPE_EXCLUDE[dayType] || [];
-  const anchorColorId = outfit?.dress?.colorId || outfit?.bottom?.colorId || outfit?.top?.colorId || null;
+  const anchorItem = outfit?.dress || outfit?.bottom || outfit?.top || null;
+  const anchorColors = anchorItem ? getItemColors(anchorItem) : [];
 
   // те же уровни теплоты, что и в основном подборе, но рассчитаны под температуру вечера
   const eveningWarmth =
@@ -595,11 +673,12 @@ function pickEveningLayer(items, { currentTemp, coldestLater, outfit, dayType })
 
   if (pool.length === 0) return null;
 
-  const isAnchorNeutral = !anchorColorId || NEUTRAL_COLORS.includes(anchorColorId);
+  const isAnchorNeutral = anchorColors.length === 0 || anchorColors.some((c) => NEUTRAL_COLORS.includes(c));
   const compatible = pool.filter((p) => {
-    if (NEUTRAL_COLORS.includes(p.colorId)) return true;
+    const pColors = getItemColors(p);
+    if (pColors.some((c) => NEUTRAL_COLORS.includes(c))) return true;
     if (isAnchorNeutral) return true;
-    return p.colorId === anchorColorId;
+    return pColors.some((c) => anchorColors.includes(c));
   });
   const finalPool = compatible.length > 0 ? compatible : pool;
   const chosen = finalPool[Math.floor(Math.random() * finalPool.length)];
@@ -816,7 +895,7 @@ export default function App() {
     }
   }
 
-  async function addItem(item) {
+  async function addItem(item, options = {}) {
     if (!session?.user) return;
     setSaveStatus("saving");
     try {
@@ -836,7 +915,7 @@ export default function App() {
         createdAt: Date.now(),
       };
       setItems((prev) => [newItem, ...prev]);
-      setShowAddSheet(false);
+      if (!options.keepOpen) setShowAddSheet(false);
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus(null), 1500);
     } catch (e) {
@@ -1524,6 +1603,15 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
               swatch={item.colorHex}
             />
             {seasonMeta && <DetailRow label="Сезон" value={seasonMeta.label} />}
+            {item.silhouetteId && (
+              <DetailRow label="Силуэт" value={SILHOUETTES.find((s) => s.id === item.silhouetteId)?.label} />
+            )}
+            {item.lengthId && (
+              <DetailRow label="Длина" value={LENGTHS.find((l) => l.id === item.lengthId)?.label} />
+            )}
+            {item.styleId && (
+              <DetailRow label="Стиль" value={STYLES.find((s) => s.id === item.styleId)?.label} />
+            )}
             {item.brand && <DetailRow label="Бренд" value={item.brand} />}
             {item.size && <DetailRow label="Размер" value={item.size} />}
             {item.price !== null && item.price !== undefined && (
@@ -1594,6 +1682,10 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   const [subcategory, setSubcategory] = useState(editItem?.subcategory || null);
   const [colorId, setColorId] = useState(editItem?.colorId || null);
   const [seasonId, setSeasonId] = useState(editItem?.seasonId || null);
+  const [patternColorIds, setPatternColorIds] = useState(editItem?.patternColorIds || []); // цвета узора/принта, если вещь не однотонная
+  const [silhouetteId, setSilhouetteId] = useState(editItem?.silhouetteId || null);
+  const [lengthId, setLengthId] = useState(editItem?.lengthId || null);
+  const [styleId, setStyleId] = useState(editItem?.styleId || null);
   const [photos, setPhotos] = useState(editItem?.photos || []);
   const [name, setName] = useState(editItem?.name || "");
   const [brand, setBrand] = useState(editItem?.brand || "");
@@ -1605,17 +1697,44 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   const [bgRemoval, setBgRemoval] = useState({}); // { [photoIndex]: "processing" | { original, result } }
   const [recognizeStatus, setRecognizeStatus] = useState(null); // null | "loading" | "error" | "done"
   const [recognizeSuggestion, setRecognizeSuggestion] = useState(null); // { type: "subcategory"|"color", label } — если AI предложил новый вариант, не входящий в списки
+  const [multiItems, setMultiItems] = useState(null); // массив вещей, если AI нашёл больше одной на фото
+  const [selectedMultiLabels, setSelectedMultiLabels] = useState([]); // какие из multiItems отмечены чекбоксом
+  const [extraItemsToAdd, setExtraItemsToAdd] = useState([]); // вещи, которые нужно добавить после текущей (очередь)
   const fileInputRef = useRef(null);
 
   const category = CATEGORIES.find((c) => c.id === categoryId);
   const color = COLORS.find((c) => c.id === colorId);
 
+  // Применяет результат распознавания одной вещи к форме (категория/тип/цвет, либо подсказка про новый вариант)
+  function applyRecognizedItem(result) {
+    if (result.categoryId) setCategoryId(result.categoryId);
+    if (result.subcategory) {
+      setSubcategory(result.subcategory);
+    } else if (result.suggestedNewSubcategory) {
+      setRecognizeSuggestion({ type: "subcategory", label: result.suggestedNewSubcategory, categoryId: result.categoryId });
+    }
+    if (result.colorId) {
+      setColorId(result.colorId);
+    } else if (result.suggestedNewColorLabel) {
+      setRecognizeSuggestion((prev) => prev || { type: "color", label: result.suggestedNewColorLabel });
+    }
+    // Сезон/теплоту AI определяет сам по виду вещи — пользователь раньше часто забывал его выставлять
+    if (result.seasonId) setSeasonId(result.seasonId);
+    if (Array.isArray(result.patternColorIds) && result.patternColorIds.length > 0) {
+      setPatternColorIds(result.patternColorIds);
+    }
+    if (result.silhouetteId) setSilhouetteId(result.silhouetteId);
+    if (result.lengthId) setLengthId(result.lengthId);
+    if (result.styleId) setStyleId(result.styleId);
+  }
+
   // Необязательное автораспознавание категории/типа/цвета по первому фото — через Claude API (сервер).
-  // Запускается только по нажатию кнопки, ничего не делает само по себе.
+  // Если на фото несколько вещей — показывает список с чекбоксами вместо сразу заполненной формы.
   async function handleRecognize() {
     if (photos.length === 0) return;
     setRecognizeStatus("loading");
     setRecognizeSuggestion(null);
+    setMultiItems(null);
     try {
       const dataUrl = photos[0];
       const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
@@ -1630,22 +1749,58 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       });
       if (!response.ok) throw new Error("Сервер вернул ошибку");
       const result = await response.json();
+      const items = result.items || [];
 
-      if (result.categoryId) setCategoryId(result.categoryId);
-      if (result.subcategory) {
-        setSubcategory(result.subcategory);
-      } else if (result.suggestedNewSubcategory) {
-        setRecognizeSuggestion({ type: "subcategory", label: result.suggestedNewSubcategory, categoryId: result.categoryId });
+      if (items.length <= 1) {
+        if (items.length === 1) applyRecognizedItem(items[0]);
+        setRecognizeStatus("done");
+      } else {
+        // Несколько вещей на фото — показываем список для выбора, форму не трогаем
+        setMultiItems(items);
+        setSelectedMultiLabels([]);
+        setRecognizeStatus("done");
       }
-      if (result.colorId) {
-        setColorId(result.colorId);
-      } else if (result.suggestedNewColorLabel) {
-        setRecognizeSuggestion((prev) => prev || { type: "color", label: result.suggestedNewColorLabel });
-      }
-      setRecognizeStatus("done");
     } catch (e) {
       setRecognizeStatus("error");
     }
+  }
+
+  function toggleMultiSelection(label) {
+    setSelectedMultiLabels((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
+    );
+  }
+
+  // Уточняющее распознавание именно выбранной вещи (передаём подсказку focusHint),
+  // чтобы получить точную категорию/тип/цвет конкретно для неё.
+  async function recognizeFocused(itemLabel) {
+    const dataUrl = photos[0];
+    const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
+    if (!match) return null;
+    const mediaType = match[1];
+    const imageBase64 = match[2];
+
+    const response = await fetch("/api/recognize-item", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64, mediaType, focusHint: itemLabel }),
+    });
+    if (!response.ok) return null;
+    const result = await response.json();
+    return (result.items && result.items[0]) || null;
+  }
+
+  // Применяет к форме первую выбранную вещь, остальные кладёт в очередь extraItemsToAdd —
+  // они будут предложены по очереди после сохранения текущей вещи.
+  async function handleConfirmMultiSelection() {
+    if (selectedMultiLabels.length === 0) return;
+    setRecognizeStatus("loading");
+    const [firstLabel, ...restLabels] = selectedMultiLabels;
+    const firstResult = await recognizeFocused(firstLabel);
+    if (firstResult) applyRecognizedItem(firstResult);
+    setExtraItemsToAdd(restLabels);
+    setMultiItems(null);
+    setRecognizeStatus("done");
   }
 
   function handleFile(e) {
@@ -1711,7 +1866,26 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     });
   }
 
-  function handleSubmit() {
+  function resetFormForNextItem() {
+    setCategoryId(null);
+    setSubcategory(null);
+    setColorId(null);
+    setSeasonId(null);
+    setPatternColorIds([]);
+    setSilhouetteId(null);
+    setLengthId(null);
+    setStyleId(null);
+    setName("");
+    setBrand("");
+    setNote("");
+    setSize("");
+    setPrice("");
+    setRecognizeSuggestion(null);
+    setIsSubmitting(false);
+    // фото оставляем — следующая вещь распознаётся с того же снимка
+  }
+
+  async function handleSubmit() {
     if (!categoryId || !subcategory || !colorId || isSubmitting) return;
     setIsSubmitting(true);
     const payload = {
@@ -1721,6 +1895,10 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       colorLabel: color.label,
       colorHex: color.hex,
       seasonId,
+      patternColorIds, // цвета принта/узора — используются для сочетаемости отдельно от основного цвета
+      silhouetteId,
+      lengthId,
+      styleId,
       photos,
       photo: photos[0] || null, // для обратной совместимости с местами, где используется одно фото
       name: name.trim(),
@@ -1730,10 +1908,23 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       price: price === "" ? null : Number(price),
       currencyId,
     };
+
     if (isEditing) {
       onSave(payload);
-    } else {
-      onAdd(payload);
+      return;
+    }
+
+    await onAdd(payload, { keepOpen: extraItemsToAdd.length > 0 });
+
+    // Если есть очередь вещей с этого же фото (множественное распознавание) — переходим к следующей
+    if (extraItemsToAdd.length > 0) {
+      const [nextLabel, ...rest] = extraItemsToAdd;
+      setExtraItemsToAdd(rest);
+      resetFormForNextItem();
+      setRecognizeStatus("loading");
+      const nextResult = await recognizeFocused(nextLabel);
+      if (nextResult) applyRecognizedItem(nextResult);
+      setRecognizeStatus("done");
     }
   }
 
@@ -1923,6 +2114,70 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
               </p>
             )}
 
+            {/* На фото нашлось несколько вещей — выбор чекбоксами, что добавить */}
+            {multiItems && multiItems.length > 0 && (
+              <div className="mt-3 bg-[#fdfbf7] border border-[#e3d8c4] rounded-2xl p-3.5">
+                <p className="text-sm text-[#5a5042] mb-2.5">
+                  На фото нашлось несколько вещей — отметьте, что добавить в гардероб:
+                </p>
+                <div className="space-y-2">
+                  {multiItems.map((mi) => {
+                    const checked = selectedMultiLabels.includes(mi.itemLabel);
+                    return (
+                      <button
+                        key={mi.itemLabel}
+                        onClick={() => toggleMultiSelection(mi.itemLabel)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left"
+                        style={
+                          checked
+                            ? { backgroundColor: "#f3e9da", borderColor: "#e0563a" }
+                            : { backgroundColor: "#ffffff", borderColor: "#e3d8c4" }
+                        }
+                      >
+                        <span
+                          className="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0"
+                          style={
+                            checked
+                              ? { backgroundColor: "#e0563a", borderColor: "#e0563a" }
+                              : { borderColor: "#d9c9ac" }
+                          }
+                        >
+                          {checked && <Check size={13} className="text-white" />}
+                        </span>
+                        <span className="text-sm text-[#5a5042]">{mi.itemLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => setMultiItems(null)}
+                    className="flex-1 py-2 rounded-full text-sm border bg-[#fdfbf7] border-[#e3d8c4] text-[#5a5042]"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    onClick={handleConfirmMultiSelection}
+                    disabled={selectedMultiLabels.length === 0}
+                    className="flex-1 py-2 rounded-full text-sm"
+                    style={
+                      selectedMultiLabels.length > 0
+                        ? { backgroundColor: "#e0563a", color: "#ffffff" }
+                        : { backgroundColor: "#ebe1cf", color: "#a89a82" }
+                    }
+                  >
+                    Добавить выбранные ({selectedMultiLabels.length})
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {extraItemsToAdd.length > 0 && (
+              <p className="text-xs text-[#8a7d6a] mt-2">
+                Осталось добавить ещё {extraItemsToAdd.length} {extraItemsToAdd.length === 1 ? "вещь" : "вещи"} с этого фото — заполните и сохраните текущую.
+              </p>
+            )}
+
             {recognizeSuggestion && (
               <div className="mt-3 bg-[#f3e9da] rounded-xl px-3.5 py-3">
                 <p className="text-sm text-[#6b5a3f]">
@@ -2075,6 +2330,104 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
               «Любой» — вещь будет предложена в подборе образа в любую погоду и сезон
             </p>
           </div>
+
+          {/* Силуэт, длина, стиль — заполняются автораспознаванием, можно поправить вручную */}
+          <div>
+            <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
+              Силуэт <span className="text-[#c9bb9f]">— по желанию</span>
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {SILHOUETTES.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSilhouetteId(silhouetteId === s.id ? null : s.id)}
+                  className="px-3 py-1.5 rounded-full text-sm border"
+                  style={
+                    silhouetteId === s.id
+                      ? { backgroundColor: "#c97b5f", color: "#ffffff", borderColor: "#c97b5f" }
+                      : { backgroundColor: "#fdfbf7", borderColor: "#e3d8c4", color: "#5a5042" }
+                  }
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
+              Длина / пропорции <span className="text-[#c9bb9f]">— по желанию</span>
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {LENGTHS.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => setLengthId(lengthId === l.id ? null : l.id)}
+                  className="px-3 py-1.5 rounded-full text-sm border"
+                  style={
+                    lengthId === l.id
+                      ? { backgroundColor: "#c97b5f", color: "#ffffff", borderColor: "#c97b5f" }
+                      : { backgroundColor: "#fdfbf7", borderColor: "#e3d8c4", color: "#5a5042" }
+                  }
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
+              Стиль <span className="text-[#c9bb9f]">— по желанию</span>
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {STYLES.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setStyleId(styleId === s.id ? null : s.id)}
+                  className="px-3 py-1.5 rounded-full text-sm border"
+                  style={
+                    styleId === s.id
+                      ? { backgroundColor: "#c97b5f", color: "#ffffff", borderColor: "#c97b5f" }
+                      : { backgroundColor: "#fdfbf7", borderColor: "#e3d8c4", color: "#5a5042" }
+                  }
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Цвета узора/принта — заполняются автораспознаванием, если вещь не однотонная */}
+          {patternColorIds.length > 0 && (
+            <div>
+              <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
+                Цвета узора/принта <span className="text-[#c9bb9f]">— определены автоматически</span>
+              </label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {patternColorIds.map((cId) => {
+                  const c = COLORS.find((col) => col.id === cId);
+                  if (!c) return null;
+                  return (
+                    <span
+                      key={cId}
+                      className="flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full border bg-[#fdfbf7] border-[#e3d8c4]"
+                    >
+                      <span className="w-4 h-4 rounded-full border border-black/10" style={{ background: c.hex }} />
+                      <span className="text-sm text-[#5a5042]">{c.label}</span>
+                      <button
+                        onClick={() => setPatternColorIds((prev) => prev.filter((p) => p !== cId))}
+                        className="text-[#a89a82]"
+                        aria-label="Убрать цвет"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Название, бренд, заметка — по желанию, помогают находить вещь через поиск */}
           <div>
