@@ -210,6 +210,18 @@ const DAY_TYPES = [
 const NEUTRAL_COLORS = ["black", "white", "cream", "beige", "gray", "graphite", "navy", "brown", "camel", "khaki", "silver"];
 
 // Какие подкатегории допустимы для каждого типа дня (фильтр-исключение)
+// Встроенная теплота по типу вещи — подстраховка для старых вещей без явного seasonId
+// (заполняется автоматически при AI-распознавании, но у вещей, добавленных раньше,
+// это поле могло остаться пустым). Используется только как дополнение к seasonId,
+// не заменяет его — если seasonId указан явно, он в приоритете.
+const WARM_SUBCATEGORIES = [
+  "Водолазка", "Свитер / джемпер", "Пуховик", "Пальто", "Утеплённый жилет",
+  "Сапоги", "Угги", "Шапка", "Перчатки", "Спортивные брюки",
+];
+const COOL_SUBCATEGORIES = [
+  "Шорты", "Сандалии / мюли", "Шлёпанцы / вьетнамки", "Эспадрильи", "Майка",
+];
+
 const DAY_TYPE_EXCLUDE = {
   business: [
     "Шорты",
@@ -544,15 +556,26 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
 
   // Честная фильтрация по теплоте: то, что AI или сам пользователь отметил как
   // "Зима" (тёплая, плотная вещь) не предлагается в жару, и наоборот — летние лёгкие
-  // вещи не предлагаются в холод. Это отдельно от "сезона по календарю" выше.
+  // вещи не предлагаются в холод. Учитывает и явный seasonId, и встроенную теплоту
+  // по типу вещи (подстраховка для вещей, добавленных до автораспознавания).
+  function isTooWarmForHeat(item) {
+    if (item.seasonId === "winter") return true;
+    if (!item.seasonId && WARM_SUBCATEGORIES.includes(item.subcategory)) return true;
+    return false;
+  }
+  function isTooLightForCold(item) {
+    if (item.seasonId === "summer") return true;
+    if (!item.seasonId && COOL_SUBCATEGORIES.includes(item.subcategory)) return true;
+    return false;
+  }
   function filterByWarmth(pool) {
     if (warmthLevel === "none") {
       // жарко — зимние тёплые вещи не годятся
-      return pool.filter((i) => i.seasonId !== "winter");
+      return pool.filter((i) => !isTooWarmForHeat(i));
     }
     if (warmthLevel === "heavy" || warmthLevel === "mid") {
       // холодно — летние лёгкие вещи не годятся
-      return pool.filter((i) => i.seasonId !== "summer");
+      return pool.filter((i) => !isTooLightForCold(i));
     }
     return pool; // light/умеренно — подходит почти всё
   }
