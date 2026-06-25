@@ -215,7 +215,7 @@ const NEUTRAL_COLORS = ["black", "white", "cream", "beige", "gray", "graphite", 
 // это поле могло остаться пустым). Используется только как дополнение к seasonId,
 // не заменяет его — если seasonId указан явно, он в приоритете.
 const WARM_SUBCATEGORIES = [
-  "Водолазка", "Свитер / джемпер", "Пуховик", "Пальто", "Утеплённый жилет",
+  "Водолазка", "Свитер / джемпер", "Лонгслив", "Пуховик", "Пальто", "Утеплённый жилет",
   "Сапоги", "Угги", "Шапка", "Перчатки", "Спортивные брюки",
 ];
 const COOL_SUBCATEGORIES = [
@@ -982,6 +982,22 @@ export default function App() {
     }
   }
 
+  // Отмечает сразу несколько вещей как надетые сегодня — увеличивает wearCount у каждой.
+  // Используется с экрана "Образ дня" при подтверждении реально надетых вещей (через чекбоксы).
+  async function markItemsAsWorn(itemIds) {
+    for (const id of itemIds) {
+      const item = items.find((i) => i.id === id);
+      if (!item) continue;
+      const newWearCount = (item.wearCount || 0) + 1;
+      try {
+        await updateWardrobeItem(id, { wearCount: newWearCount });
+        setItems((prev) => prev.map((i) => (i.id === id ? { ...i, wearCount: newWearCount } : i)));
+      } catch (e) {
+        // Если одна вещь не обновилась — не прерываем весь процесс, продолжаем с остальными
+      }
+    }
+  }
+
   function togglePinned(id) {
     setPinnedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
   }
@@ -1155,6 +1171,7 @@ export default function App() {
           profile={profile}
           pinnedIds={pinnedIds}
           onClearPinned={() => setPinnedIds([])}
+          onMarkWorn={markItemsAsWorn}
         />
       )}
       {screen === "profile" && (
@@ -1641,6 +1658,13 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
               <DetailRow
                 label="Цена"
                 value={`${item.price} ${CURRENCIES.find((c) => c.id === item.currencyId)?.symbol || ""}`}
+              />
+            )}
+            <DetailRow label="Сколько раз надета" value={`${item.wearCount || 0}`} />
+            {item.price !== null && item.price !== undefined && item.wearCount > 0 && (
+              <DetailRow
+                label="Цена за носку"
+                value={`${(item.price / item.wearCount).toFixed(2)} ${CURRENCIES.find((c) => c.id === item.currencyId)?.symbol || ""}`}
               />
             )}
           </div>
@@ -2540,7 +2564,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
 }
 
 // ---- Экран подбора образа дня ----
-function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
+function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned, onMarkWorn }) {
   const [temp, setTemp] = useState(12);
   const [rain, setRain] = useState(false);
   const [dayType, setDayType] = useState("casual");
@@ -2772,7 +2796,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
             {rain ? ", с учётом осадков" : ""}
           </p>
           {results.map((r, idx) => (
-            <OutfitVariant key={idx} index={idx} result={r} />
+            <OutfitVariant key={idx} index={idx} result={r} onMarkWorn={onMarkWorn} />
           ))}
         </div>
       )}
@@ -2780,7 +2804,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
   );
 }
 
-function OutfitVariant({ index, result }) {
+function OutfitVariant({ index, result, onMarkWorn }) {
   const { outfit, missing, description, colortypeNote, eveningLayer } = result;
   const slots = [
     { key: "outerwear", label: "Верхняя одежда" },
@@ -2792,6 +2816,25 @@ function OutfitVariant({ index, result }) {
     { key: "accessory", label: "Аксессуар" },
   ];
   const filledSlots = slots.filter((s) => outfit[s.key]);
+
+  // По умолчанию отмечены все вещи образа — пользователь может снять галочку
+  // с того, что заменила на другую вещь или не надела вообще.
+  const [checkedIds, setCheckedIds] = useState(() => filledSlots.map((s) => outfit[s.key].id));
+  const [wornStatus, setWornStatus] = useState(null); // null | "saving" | "saved"
+
+  function toggleChecked(itemId) {
+    setCheckedIds((prev) =>
+      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
+    );
+  }
+
+  async function handleMarkWorn() {
+    if (checkedIds.length === 0 || !onMarkWorn) return;
+    setWornStatus("saving");
+    await onMarkWorn(checkedIds);
+    setWornStatus("saved");
+    setTimeout(() => setWornStatus(null), 2000);
+  }
 
   return (
     <div>
@@ -2806,10 +2849,12 @@ function OutfitVariant({ index, result }) {
         <div className="grid grid-cols-2 gap-3">
           {filledSlots.map((s) => {
             const isPinned = result.pinnedSlots?.includes(s.key);
+            const itemId = outfit[s.key].id;
+            const checked = checkedIds.includes(itemId);
             return (
               <div
                 key={s.key}
-                className={`bg-white rounded-2xl border overflow-hidden ${
+                className={`bg-white rounded-2xl border overflow-hidden relative ${
                   isPinned ? "border-[#e0563a] ring-2 ring-[#e0563a]/20" : "border-[#e9ddc8]"
                 }`}
               >
@@ -2820,10 +2865,24 @@ function OutfitVariant({ index, result }) {
                     <Shirt size={28} className="text-[#c9bb9f]" />
                   )}
                   {isPinned && (
-                    <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#e0563a] flex items-center justify-center">
+                    <span className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-[#e0563a] flex items-center justify-center">
                       <Check size={11} className="text-white" />
                     </span>
                   )}
+                  {/* Чекбокс: реально ли надета именно эта вещь — снимается, если заменили на свою */}
+                  <button
+                    onClick={() => toggleChecked(itemId)}
+                    className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center border-2"
+                    style={
+                      checked
+                        ? { backgroundColor: "#4c5e3f", borderColor: "#4c5e3f" }
+                        : { backgroundColor: "rgba(255,255,255,0.85)", borderColor: "#d9c9ac" }
+                    }
+                    aria-label={checked ? "Отметить как не надетую" : "Отметить как надетую"}
+                    title="Я реально надела именно эту вещь"
+                  >
+                    {checked && <Check size={13} className="text-white" />}
+                  </button>
                 </div>
                 <div className="p-2.5">
                   <p className="text-[10px] uppercase tracking-wider text-[#a89a82]">{s.label}</p>
@@ -2869,6 +2928,42 @@ function OutfitVariant({ index, result }) {
             В гардеробе не нашлось подходящего: {missing.join(", ")}.
           </p>
         </div>
+      )}
+
+      {/* Отметка реально надетых вещей — увеличивает счётчик носок (для cost-per-wear) */}
+      {filledSlots.length > 0 && onMarkWorn && (
+        <button
+          onClick={handleMarkWorn}
+          disabled={checkedIds.length === 0 || wornStatus === "saving"}
+          className="mt-3 w-full py-2.5 rounded-full text-sm font-medium flex items-center justify-center gap-2"
+          style={
+            wornStatus === "saved"
+              ? { backgroundColor: "#dce8d4", color: "#3a4f2f" }
+              : checkedIds.length > 0
+              ? { backgroundColor: "#4c5e3f", color: "#ffffff" }
+              : { backgroundColor: "#ebe1cf", color: "#a89a82" }
+          }
+        >
+          {wornStatus === "saving" ? (
+            <>
+              <span
+                className="w-3.5 h-3.5 rounded-full animate-spin"
+                style={{ border: "1.5px solid rgba(255,255,255,0.4)", borderTopColor: "#ffffff" }}
+              />
+              Сохраняем...
+            </>
+          ) : wornStatus === "saved" ? (
+            <>
+              <Check size={15} />
+              Отмечено
+            </>
+          ) : (
+            <>
+              <Check size={15} />
+              Я надела этот образ ({checkedIds.length})
+            </>
+          )}
+        </button>
       )}
     </div>
   );
