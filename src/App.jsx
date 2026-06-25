@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Plus, X, Shirt, Footprints, ShoppingBag, Gem, Snowflake, Sun, CloudSun, Search, LayoutGrid, CloudRain, Briefcase, Coffee, Dumbbell, PartyPopper, Sparkles, RefreshCw, Calendar, User, Ruler, Eye, Check, Camera, Columns3, PersonStanding, Umbrella, LogOut, Pencil, Trash2 } from "lucide-react";
+import { Plus, X, Shirt, Footprints, ShoppingBag, Gem, Snowflake, Sun, CloudSun, Search, LayoutGrid, CloudRain, Briefcase, Coffee, Dumbbell, PartyPopper, Sparkles, RefreshCw, Calendar, User, Ruler, Eye, Check, Camera, Columns3, PersonStanding, Umbrella, LogOut, Pencil, Trash2, Scissors } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import AuthScreen from "./AuthScreen";
 import {
@@ -12,6 +12,7 @@ import {
   uploadPhoto,
 } from "./dataStore";
 
+// ---- Категории и подкатегории ----
 const CATEGORIES = [
   {
     id: "tops",
@@ -121,10 +122,11 @@ const COLORS = [
   { id: "multi", label: "Принт / разноцветный", hex: "linear-gradient(135deg,#a8362a,#cfa83e,#5b7ea0)" },
 ];
 
+// ---- Данные профиля пользователя ----
 const GENDERS = ["Женский", "Мужской", "Не указывать"];
 
 const CLOTHING_SIZES = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
-const SHOE_SIZES_EU = Array.from({ length: 22 }, (_, i) => 34 + i);
+const SHOE_SIZES_EU = Array.from({ length: 22 }, (_, i) => 34 + i); // 34–55
 
 const EYE_COLORS = [
   { id: "brown", label: "Карие", hex: "#5b3a21" },
@@ -145,6 +147,7 @@ const HAIR_COLORS = [
 
 const AGE_RANGES = ["До 18", "18–24", "25–34", "35–44", "45–54", "55+"];
 
+// ---- Валюты для цены вещи (AZN по умолчанию) ----
 const CURRENCIES = [
   { id: "azn", symbol: "₼", label: "AZN" },
   { id: "rub", symbol: "₽", label: "RUB" },
@@ -182,6 +185,7 @@ const DAY_TYPES = [
 
 const NEUTRAL_COLORS = ["black", "white", "cream", "beige", "gray", "graphite", "navy", "brown", "camel", "khaki", "silver"];
 
+// Какие подкатегории допустимы для каждого типа дня (фильтр-исключение)
 const DAY_TYPE_EXCLUDE = {
   business: [
     "Шорты",
@@ -200,6 +204,7 @@ const DAY_TYPE_EXCLUDE = {
   casual: [],
 };
 
+// Уточнения внутри сценария: либо доп. исключения, либо смягчение базового правила
 const SCENARIO_RULES = {
   "Поход": {
     allowBack: ["Кроссовки"],
@@ -248,8 +253,9 @@ const SCENARIO_RULES = {
   "Бег": { extraExclude: ["Украшения", "Шапка", "Сумка через плечо", "Клатч", "Тоут"] },
 };
 
+// ---- Получение погоды по геолокации через Open-Meteo (бесплатный API, без ключа) ----
 function fetchWeatherByCoords(lat, lon) {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code&hourly=temperature_2m&forecast_days=1&timezone=auto`;
   return fetch(url)
     .then((res) => {
       if (!res.ok) throw new Error("Не удалось получить погоду");
@@ -261,7 +267,27 @@ function fetchWeatherByCoords(lat, lon) {
       const precipitation = current.precipitation || 0;
       const weatherCode = current.weather_code;
       const isPrecipCode = (weatherCode >= 51 && weatherCode <= 99) || precipitation > 0;
-      return { temp, rain: isPrecipCode };
+
+      // Ищем самый холодный час среди оставшихся часов сегодняшнего дня
+      let coldestLater = null;
+      try {
+        const nowTime = new Date(current.time);
+        const hourly = data.hourly;
+        if (hourly && hourly.time && hourly.temperature_2m) {
+          for (let i = 0; i < hourly.time.length; i++) {
+            const slotTime = new Date(hourly.time[i]);
+            if (slotTime <= nowTime) continue; // только будущие часы сегодняшнего дня
+            const slotTemp = hourly.temperature_2m[i];
+            if (coldestLater === null || slotTemp < coldestLater.temp) {
+              coldestLater = { temp: Math.round(slotTemp), time: slotTime };
+            }
+          }
+        }
+      } catch (e) {
+        coldestLater = null; // если прогноз не разобрался — просто не показываем совет
+      }
+
+      return { temp, rain: isPrecipCode, coldestLater };
     });
 }
 
@@ -287,6 +313,8 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// Сжимает изображение перед сохранением — ограничивает максимальную сторону и качество,
+// чтобы фото не превышали лимит хранилища (особенно важно при нескольких фото на вещь)
 function compressImage(file, maxSize = 800, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -316,6 +344,8 @@ function compressImage(file, maxSize = 800, quality = 0.7) {
   });
 }
 
+// ---- Логика подбора образа по правилам ----
+// Категория вещи -> слот в образе
 const CATEGORY_TO_SLOT = {
   outerwear: "outerwear",
   dresses: "dress",
@@ -326,10 +356,11 @@ const CATEGORY_TO_SLOT = {
   accessories: "accessory",
 };
 
+// С какими категориями вещь логически сочетается (для расчёта % совместимости)
 const PAIRS_WITH = {
-  tops: ["bottoms"],
+  tops: ["bottoms"], // верх сочетается с низом
   bottoms: ["tops"],
-  dresses: [],
+  dresses: [], // платье — самостоятельный образ, не сочетается с верхом/низом напрямую
   outerwear: ["tops", "bottoms", "dresses"],
   shoes: ["tops", "bottoms", "dresses"],
   bags: ["tops", "bottoms", "dresses"],
@@ -341,9 +372,11 @@ function colorsCompatible(colorIdA, colorIdB) {
   return colorIdA === colorIdB;
 }
 
+// Считает % вещей в гардеробе, с которыми данная вещь сочетается по цвету
 function calcMatchScore(item, allItems) {
   const pairCategories = PAIRS_WITH[item.categoryId] || [];
   if (pairCategories.length === 0) {
+    // У платьев считаем сочетаемость с обувью/сумками/аксессуарами/верхней одеждой
     const candidates = allItems.filter(
       (i) => i.id !== item.id && ["shoes", "bags", "accessories", "outerwear"].includes(i.categoryId)
     );
@@ -358,6 +391,7 @@ function calcMatchScore(item, allItems) {
   return Math.round((matches.length / candidates.length) * 100);
 }
 
+// Подсказка, что докупить, если процент низкий
 function suggestForLowMatch(item) {
   const categoryLabel =
     item.categoryId === "tops" || item.categoryId === "dresses"
@@ -368,16 +402,18 @@ function suggestForLowMatch(item) {
   return `Добавьте в гардероб нейтральный ${categoryLabel} (чёрный, белый, бежевый, серый) — это поможет этой вещи сочетаться с большим количеством образов.`;
 }
 
+// Строит поисковый запрос на Pinterest для идей, что докупить к этой вещи
 function buildPinterestSearchUrl(item) {
   const query = `${item.colorLabel} ${item.subcategory} с чем носить сочетание`;
   return `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
 }
 
+// Текущий календарный сезон по дате устройства (без геолокации — обычный системный календарь)
 function getCurrentSeason() {
-  const month = new Date().getMonth() + 1;
+  const month = new Date().getMonth() + 1; // 1-12
   if (month === 12 || month === 1 || month === 2) return "winter";
   if (month >= 6 && month <= 8) return "summer";
-  return "demi";
+  return "demi"; // март-май, сентябрь-ноябрь
 }
 
 function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) {
@@ -389,6 +425,10 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
 
   const currentSeason = getCurrentSeason();
 
+  // Вещи "деми" и вещи без указанного сезона подходят всегда.
+  // Вещи текущего календарного сезона — в приоритете.
+  // Если подходящих по сезону вещей не нашлось, используем все — лучше предложить
+  // что-то, чем оставить слот пустым.
   function prioritizeBySeason(pool) {
     const seasonMatch = pool.filter(
       (i) => i.seasonId === currentSeason || i.seasonId === "demi" || !i.seasonId
@@ -402,6 +442,8 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   const needsOuterwear = temp < 18 || rain;
   const warmthLevel = temp < 0 ? "heavy" : temp < 10 ? "mid" : temp < 18 ? "light" : "none";
 
+  // Зафиксированные вещи группируются по слотам — если в одном слоте несколько вещей,
+  // на каждый сгенерированный вариант берётся случайная из них (никто не теряется)
   const pinnedBySlot = {};
   pinnedItems.forEach((item) => {
     const slot = CATEGORY_TO_SLOT[item.categoryId];
@@ -426,9 +468,11 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
         )
     );
   }
+  // В тёплую погоду закрытая зимняя обувь (сапоги, ботинки, угги) исключается
   if (warmthLevel === "none") {
     shoesPool = shoesPool.filter((s) => !["Сапоги", "Ботинки", "Угги"].includes(s.subcategory));
   }
+  // В холодную погоду открытая летняя обувь исключается
   if (warmthLevel === "heavy" || warmthLevel === "mid") {
     shoesPool = shoesPool.filter(
       (s) => !["Сандалии / мюли", "Шлёпанцы / вьетнамки", "Эспадрильи"].includes(s.subcategory)
@@ -520,6 +564,52 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   return { outfit, missing, needsOuterwear, warmthLevel, pinnedSlots };
 }
 
+// ---- Совет про похолодание вечером: подбираем накидку/верхнюю одежду из гардероба ----
+// Порог: если станет холоднее минимум на COLD_DROP_THRESHOLD градусов — стоит предупредить.
+const COLD_DROP_THRESHOLD = 5;
+
+function pickEveningLayer(items, { currentTemp, coldestLater, outfit, dayType }) {
+  if (!coldestLater) return null;
+  const drop = currentTemp - coldestLater.temp;
+  if (drop < COLD_DROP_THRESHOLD) return null;
+
+  const baseExclude = DAY_TYPE_EXCLUDE[dayType] || [];
+  const anchorColorId = outfit?.dress?.colorId || outfit?.bottom?.colorId || outfit?.top?.colorId || null;
+
+  // те же уровни теплоты, что и в основном подборе, но рассчитаны под температуру вечера
+  const eveningWarmth =
+    coldestLater.temp < 0 ? "heavy" : coldestLater.temp < 10 ? "mid" : coldestLater.temp < 18 ? "light" : "none";
+
+  let pool = items.filter((i) => i.categoryId === "outerwear" && !baseExclude.includes(i.subcategory));
+  if (eveningWarmth === "heavy") {
+    pool = pool.filter((o) => ["Пуховик", "Пальто"].includes(o.subcategory));
+  } else if (eveningWarmth === "mid") {
+    pool = pool.filter((o) => ["Куртка", "Пальто", "Жакет", "Пиджак", "Утеплённый жилет"].includes(o.subcategory));
+  } else if (eveningWarmth === "light") {
+    pool = pool.filter((o) =>
+      ["Джинсовая куртка", "Жакет", "Пиджак", "Накидка", "Утеплённый жилет", "Плащ"].includes(o.subcategory)
+    );
+  }
+  // already in the outfit — не предлагаем то же самое повторно
+  if (outfit?.outerwear) pool = pool.filter((o) => o.id !== outfit.outerwear.id);
+
+  if (pool.length === 0) return null;
+
+  const isAnchorNeutral = !anchorColorId || NEUTRAL_COLORS.includes(anchorColorId);
+  const compatible = pool.filter((p) => {
+    if (NEUTRAL_COLORS.includes(p.colorId)) return true;
+    if (isAnchorNeutral) return true;
+    return p.colorId === anchorColorId;
+  });
+  const finalPool = compatible.length > 0 ? compatible : pool;
+  const chosen = finalPool[Math.floor(Math.random() * finalPool.length)];
+
+  const timeLabel = coldestLater.time.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  return { item: chosen, temp: coldestLater.temp, timeLabel };
+}
+
+// ---- Цветотип: какие цвета вещей красиво оттеняют глаза/волосы ----
+// Это НЕ фильтр — только повод для комплимента в описании, варианты не убираются.
 const EYE_FLATTERING_COLORS = {
   brown: ["green", "yellow", "red", "beige"],
   blue: ["blue", "navy", "yellow", "beige"],
@@ -562,6 +652,7 @@ function findColortypeNote(outfit, profile) {
   return null;
 }
 
+// Короткое описание образа в свободной форме
 const STYLE_PHRASES = [
   "Лёгкий и сбалансированный образ",
   "Спокойное, уверенное сочетание",
@@ -582,6 +673,7 @@ function describeOutfit(outfit, { temp, rain }) {
   return parts.join(", ") + ".";
 }
 
+// ---- Генерация нескольких вариантов образа ----
 function pickOutfits(items, params, profile, count = 3) {
   const results = [];
   const seenSignatures = new Set();
@@ -603,6 +695,12 @@ function pickOutfits(items, params, profile, count = 3) {
       ...r,
       description: describeOutfit(r.outfit, params),
       colortypeNote: findColortypeNote(r.outfit, profile),
+      eveningLayer: pickEveningLayer(items, {
+        currentTemp: params.temp,
+        coldestLater: params.coldestLater,
+        outfit: r.outfit,
+        dayType: params.dayType,
+      }),
     });
   }
 
@@ -610,7 +708,7 @@ function pickOutfits(items, params, profile, count = 3) {
 }
 
 export default function App() {
-  const [session, setSession] = useState(undefined);
+  const [session, setSession] = useState(undefined); // undefined = проверяем, null = не залогинен, объект = залогинен
   const [screen, setScreen] = useState("wardrobe");
   const [items, setItems] = useState([]);
   const [activeCategory, setActiveCategory] = useState("all");
@@ -623,9 +721,10 @@ export default function App() {
   const [detailItemId, setDetailItemId] = useState(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [saveError, setSaveError] = useState(null);
-  const [saveStatus, setSaveStatus] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved"
   const [storageDiagnostic, setStorageDiagnostic] = useState(null);
 
+  // Проверяем текущую сессию при запуске, и слушаем изменения (вход/выход)
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session ?? null);
@@ -634,6 +733,7 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       if (!newSession) {
+        // При выходе — очищаем всё локальное состояние
         setItems([]);
         setProfile(null);
         setPinnedIds([]);
@@ -644,6 +744,7 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // Загрузка профиля и гардероба из базы данных, когда известен пользователь
   useEffect(() => {
     if (!session?.user) return;
     let cancelled = false;
@@ -670,6 +771,7 @@ export default function App() {
     };
   }, [session?.user?.id]);
 
+  // Сохранение профиля при каждом изменении
   useEffect(() => {
     if (!isLoaded || !profile || !session?.user) return;
     let cancelled = false;
@@ -718,6 +820,7 @@ export default function App() {
     if (!session?.user) return;
     setSaveStatus("saving");
     try {
+      // Сначала загружаем все фото в Storage, получаем настоящие ссылки
       const photoUrls = [];
       for (let i = 0; i < (item.photos || []).length; i++) {
         const url = await uploadPhoto(session.user.id, item.photos[i], `photo-${i}`);
@@ -753,6 +856,7 @@ export default function App() {
   }
 
   async function updateItemHandler(id, updates) {
+    // Если среди обновлений есть новые фото в формате base64 (data URL) — сначала загружаем их в Storage
     let finalUpdates = { ...updates };
     if (updates.photos) {
       const uploadedPhotos = [];
@@ -1258,6 +1362,7 @@ function ItemCard({ item, allItems, onRemove, pickMode, pinned, onTogglePin, onO
   );
 }
 
+// ---- Детальная карточка вещи: полная информация + % сочетаемости + подсказка ----
 function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const fileInputRef = useRef(null);
@@ -1328,6 +1433,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
         </div>
 
         <div className="px-5 pt-5 space-y-5">
+          {/* Фото */}
           {photos.length > 0 ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
               {photos.map((p, idx) => (
@@ -1373,6 +1479,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
             onChange={handleAddPhotos}
           />
 
+          {/* Процент сочетаемости */}
           <div className="bg-white rounded-2xl border border-[#e9ddc8] p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs uppercase tracking-wider text-[#8a7d6a]">Сочетаемость с гардеробом</span>
@@ -1397,8 +1504,8 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
             )}
           </div>
 
-          
-            <a
+          {/* Поиск идей, что докупить к этой вещи — доступно всегда, независимо от процента */}
+          <a
             href={buildPinterestSearchUrl(item)}
             target="_blank"
             rel="noopener noreferrer"
@@ -1408,6 +1515,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
             📌 Найти, что докупить — на Pinterest
           </a>
 
+          {/* Основная информация */}
           <div className="bg-white rounded-2xl border border-[#e9ddc8] divide-y divide-[#f0e6d4]">
             <DetailRow label="Категория" value={item.subcategory} />
             <DetailRow
@@ -1433,6 +1541,7 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
             </div>
           )}
 
+          {/* Удаление */}
           {!confirmingDelete ? (
             <button
               onClick={() => setConfirmingDelete(true)}
@@ -1493,10 +1602,51 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   const [price, setPrice] = useState(editItem?.price != null ? String(editItem.price) : "");
   const [currencyId, setCurrencyId] = useState(editItem?.currencyId || "azn");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [bgRemoval, setBgRemoval] = useState({}); // { [photoIndex]: "processing" | { original, result } }
+  const [recognizeStatus, setRecognizeStatus] = useState(null); // null | "loading" | "error" | "done"
+  const [recognizeSuggestion, setRecognizeSuggestion] = useState(null); // { type: "subcategory"|"color", label } — если AI предложил новый вариант, не входящий в списки
   const fileInputRef = useRef(null);
 
   const category = CATEGORIES.find((c) => c.id === categoryId);
   const color = COLORS.find((c) => c.id === colorId);
+
+  // Необязательное автораспознавание категории/типа/цвета по первому фото — через Claude API (сервер).
+  // Запускается только по нажатию кнопки, ничего не делает само по себе.
+  async function handleRecognize() {
+    if (photos.length === 0) return;
+    setRecognizeStatus("loading");
+    setRecognizeSuggestion(null);
+    try {
+      const dataUrl = photos[0];
+      const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
+      if (!match) throw new Error("Неподходящий формат фото");
+      const mediaType = match[1];
+      const imageBase64 = match[2];
+
+      const response = await fetch("/api/recognize-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64, mediaType }),
+      });
+      if (!response.ok) throw new Error("Сервер вернул ошибку");
+      const result = await response.json();
+
+      if (result.categoryId) setCategoryId(result.categoryId);
+      if (result.subcategory) {
+        setSubcategory(result.subcategory);
+      } else if (result.suggestedNewSubcategory) {
+        setRecognizeSuggestion({ type: "subcategory", label: result.suggestedNewSubcategory, categoryId: result.categoryId });
+      }
+      if (result.colorId) {
+        setColorId(result.colorId);
+      } else if (result.suggestedNewColorLabel) {
+        setRecognizeSuggestion((prev) => prev || { type: "color", label: result.suggestedNewColorLabel });
+      }
+      setRecognizeStatus("done");
+    } catch (e) {
+      setRecognizeStatus("error");
+    }
+  }
 
   function handleFile(e) {
     const files = Array.from(e.target.files || []);
@@ -1505,6 +1655,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       compressImage(file)
         .then((compressed) => setPhotos((prev) => [...prev, compressed]))
         .catch(() => {
+          // если сжатие не удалось — пробуем добавить исходный файл как запасной вариант
           const reader = new FileReader();
           reader.onload = () => setPhotos((prev) => [...prev, reader.result]);
           reader.readAsDataURL(file);
@@ -1515,6 +1666,49 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
 
   function removePhoto(index) {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
+    setBgRemoval((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+  }
+
+  // Необязательное удаление фона — запускается только по нажатию, ничего не делает автоматически.
+  // Использует @imgly/background-removal (работает прямо в браузере, без сервера и без оплаты).
+  async function handleRemoveBackground(index) {
+    setBgRemoval((prev) => ({ ...prev, [index]: "processing" }));
+    try {
+      const { removeBackground } = await import("@imgly/background-removal");
+      const original = photos[index];
+      const resultBlob = await removeBackground(original);
+      const resultUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(resultBlob);
+      });
+      setBgRemoval((prev) => ({ ...prev, [index]: { original, result: resultUrl } }));
+    } catch (e) {
+      setBgRemoval((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+    }
+  }
+
+  function chooseBgResult(index, keepResult) {
+    if (keepResult) {
+      const pending = bgRemoval[index];
+      if (pending && pending !== "processing") {
+        setPhotos((prev) => prev.map((p, i) => (i === index ? pending.result : p)));
+      }
+    }
+    setBgRemoval((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
   }
 
   function handleSubmit() {
@@ -1528,7 +1722,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       colorHex: color.hex,
       seasonId,
       photos,
-      photo: photos[0] || null,
+      photo: photos[0] || null, // для обратной совместимости с местами, где используется одно фото
       name: name.trim(),
       brand: brand.trim(),
       note: note.trim(),
@@ -1580,6 +1774,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
         </div>
 
         <div className="px-5 pt-5 pb-6 space-y-6">
+          {/* Фото */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
               Фото <span className="text-[#c9bb9f]">— можно несколько</span>
@@ -1602,6 +1797,24 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
                     >
                       <X size={11} />
                     </button>
+                    {!bgRemoval[idx] && (
+                      <button
+                        onClick={() => handleRemoveBackground(idx)}
+                        className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white flex items-center justify-center"
+                        aria-label="Удалить фон (необязательно)"
+                        title="Удалить фон"
+                      >
+                        <Scissors size={10} />
+                      </button>
+                    )}
+                    {bgRemoval[idx] === "processing" && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <span
+                          className="w-4 h-4 rounded-full animate-spin"
+                          style={{ border: "2px solid rgba(255,255,255,0.4)", borderTopColor: "#ffffff" }}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
                 <button
@@ -1613,6 +1826,52 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
                 </button>
               </div>
             )}
+
+            {/* Сравнение было/стало после удаления фона — отдельный шаг, ничего не сохраняется само по себе */}
+            {Object.entries(bgRemoval).map(([idxStr, state]) => {
+              if (state === "processing") return null;
+              const idx = Number(idxStr);
+              return (
+                <div key={idx} className="mt-3 bg-[#fdfbf7] border border-[#e3d8c4] rounded-2xl p-3">
+                  <p className="text-xs text-[#8a7d6a] mb-2">Сравните и выберите, что оставить:</p>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <div className="aspect-square rounded-xl overflow-hidden border border-[#e3d8c4] bg-[#efe7d6]">
+                        <img src={state.original} alt="Исходное фото" className="w-full h-full object-cover" />
+                      </div>
+                      <p className="text-[10px] text-center text-[#a89a82] mt-1">Исходное</p>
+                    </div>
+                    <div className="flex-1">
+                      <div
+                        className="aspect-square rounded-xl overflow-hidden border border-[#e3d8c4]"
+                        style={{
+                          backgroundImage:
+                            "repeating-conic-gradient(#e9ddc8 0% 25%, #fdfbf7 0% 50%) 50% / 12px 12px",
+                        }}
+                      >
+                        <img src={state.result} alt="Без фона" className="w-full h-full object-contain" />
+                      </div>
+                      <p className="text-[10px] text-center text-[#a89a82] mt-1">Без фона</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => chooseBgResult(idx, false)}
+                      className="flex-1 py-2 rounded-full text-sm border bg-[#fdfbf7] border-[#e3d8c4] text-[#5a5042]"
+                    >
+                      Оставить исходное
+                    </button>
+                    <button
+                      onClick={() => chooseBgResult(idx, true)}
+                      className="flex-1 py-2 rounded-full text-sm"
+                      style={{ backgroundColor: "#e0563a", color: "#ffffff" }}
+                    >
+                      Сохранить без фона
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
 
             {photos.length === 0 && (
               <button
@@ -1632,8 +1891,70 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
               className="hidden"
               onChange={handleFile}
             />
+
+            {/* Автораспознавание по фото — необязательно, по нажатию */}
+            {photos.length > 0 && (
+              <button
+                onClick={handleRecognize}
+                disabled={recognizeStatus === "loading"}
+                className="mt-3 w-full py-2.5 rounded-full text-sm font-medium border flex items-center justify-center gap-2"
+                style={{ backgroundColor: "#fdfbf7", borderColor: "#e3d8c4", color: "#5a5042" }}
+              >
+                {recognizeStatus === "loading" ? (
+                  <>
+                    <span
+                      className="w-3.5 h-3.5 rounded-full animate-spin"
+                      style={{ border: "1.5px solid #e3d8c4", borderTopColor: "#e0563a" }}
+                    />
+                    Распознаём вещь...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={14} />
+                    Определить категорию, тип и цвет автоматически
+                  </>
+                )}
+              </button>
+            )}
+
+            {recognizeStatus === "error" && (
+              <p className="text-xs text-[#a8362a] mt-2">
+                Не удалось распознать вещь — заполните поля вручную.
+              </p>
+            )}
+
+            {recognizeSuggestion && (
+              <div className="mt-3 bg-[#f3e9da] rounded-xl px-3.5 py-3">
+                <p className="text-sm text-[#6b5a3f]">
+                  AI распознал «{recognizeSuggestion.label}», но такого варианта пока нет в списке.
+                  Добавить его?
+                </p>
+                <div className="flex gap-2 mt-2.5">
+                  <button
+                    onClick={() => setRecognizeSuggestion(null)}
+                    className="flex-1 py-2 rounded-full text-sm border bg-[#fdfbf7] border-[#e3d8c4] text-[#5a5042]"
+                  >
+                    Нет, выбрать вручную
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (recognizeSuggestion.type === "subcategory" && recognizeSuggestion.categoryId) {
+                        setCategoryId(recognizeSuggestion.categoryId);
+                        setSubcategory(recognizeSuggestion.label);
+                      }
+                      setRecognizeSuggestion(null);
+                    }}
+                    className="flex-1 py-2 rounded-full text-sm"
+                    style={{ backgroundColor: "#e0563a", color: "#ffffff" }}
+                  >
+                    Добавить
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
+          {/* Категория */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Категория</label>
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1659,11 +1980,12 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
             </div>
           </div>
 
+          {/* Подкатегория */}
           {category && (
             <div>
               <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Тип</label>
               <div className="mt-2 flex flex-wrap gap-2">
-                {category.sub.map((s) => (
+                {[...category.sub, ...(subcategory && !category.sub.includes(subcategory) ? [subcategory] : [])].map((s) => (
                   <button
                     key={s}
                     onClick={() => setSubcategory(s)}
@@ -1682,6 +2004,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
             </div>
           )}
 
+          {/* Цвет */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Цвет</label>
             <div className="mt-2 grid grid-cols-6 gap-2.5">
@@ -1714,6 +2037,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
             {color && <p className="text-xs text-[#8a7d6a] mt-1.5">{color.label}</p>}
           </div>
 
+          {/* Сезон */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
               Сезон <span className="text-[#c9bb9f]">— по желанию</span>
@@ -1752,6 +2076,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
             </p>
           </div>
 
+          {/* Название, бренд, заметка — по желанию, помогают находить вещь через поиск */}
           <div>
             <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">
               Название <span className="text-[#c9bb9f]">— по желанию</span>
@@ -1838,6 +2163,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   );
 }
 
+// ---- Экран подбора образа дня ----
 function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
   const [temp, setTemp] = useState(12);
   const [rain, setRain] = useState(false);
@@ -1845,16 +2171,19 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
   const [scenario, setScenario] = useState(DAY_TYPES[0].sub[0]);
   const [results, setResults] = useState(null);
   const [emptyState, setEmptyState] = useState(false);
-  const [weatherStatus, setWeatherStatus] = useState("loading");
+  const [weatherStatus, setWeatherStatus] = useState("loading"); // loading | success | denied | error
+  const [editingTemp, setEditingTemp] = useState(false);
+  const [coldestLater, setColdestLater] = useState(null); // { temp, time } — самый холодный час, что ещё впереди
 
   useEffect(() => {
     let cancelled = false;
     getUserLocation()
       .then(({ lat, lon }) => fetchWeatherByCoords(lat, lon))
-      .then(({ temp: detectedTemp, rain: detectedRain }) => {
+      .then(({ temp: detectedTemp, rain: detectedRain, coldestLater: detectedColdestLater }) => {
         if (cancelled) return;
         setTemp(detectedTemp);
         setRain(detectedRain);
+        setColdestLater(detectedColdestLater);
         setWeatherStatus("success");
       })
       .catch((err) => {
@@ -1887,7 +2216,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
       return;
     }
     setEmptyState(false);
-    setResults(pickOutfits(items, { temp, rain, dayType, scenario, pinnedItems }, profile, 3));
+    setResults(pickOutfits(items, { temp, rain, dayType, scenario, pinnedItems, coldestLater }, profile, 3));
   }
 
   const currentSeasonMeta = SEASONS.find((s) => s.id === getCurrentSeason());
@@ -1950,80 +2279,55 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
         </section>
       )}
 
-      <section className="mb-5">
-        <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Температура</label>
-        <div className="mt-2 flex items-center gap-2.5">
+      {/* Температура и осадки — компактно, в одну строку */}
+      <section className="mb-5 flex items-center gap-2.5">
+        {editingTemp ? (
+          <input
+            type="number"
+            autoFocus
+            inputMode="numeric"
+            min={-25}
+            max={35}
+            value={temp}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "" || v === "-") {
+                setTemp(v);
+                return;
+              }
+              const num = Number(v);
+              if (!Number.isNaN(num)) setTemp(Math.min(35, Math.max(-25, num)));
+            }}
+            onBlur={() => {
+              if (temp === "" || temp === "-" || Number.isNaN(Number(temp))) setTemp(12);
+              setEditingTemp(false);
+            }}
+            className="w-16 shrink-0 text-center text-sm font-medium bg-[#fdfbf7] border border-[#e3d8c4] rounded-full py-1.5 outline-none focus:ring-2 focus:ring-[#e0563a]/30"
+          />
+        ) : (
           <button
-            onClick={() => setTemp((t) => Math.max(-25, t - 1))}
-            className="w-11 h-11 shrink-0 rounded-full bg-[#fdfbf7] border border-[#e3d8c4] flex items-center justify-center text-lg text-[#5a5042] active:scale-95"
-            aria-label="Уменьшить на 1 градус"
+            onClick={() => setEditingTemp(true)}
+            className="shrink-0 px-3 py-1.5 rounded-full text-sm font-medium border bg-[#fdfbf7] border-[#e3d8c4] text-[#5a5042]"
+            aria-label="Изменить температуру"
           >
-            −
+            {temp}°C
           </button>
-          <div className="flex-1 relative">
-            <input
-              type="number"
-              inputMode="numeric"
-              min={-25}
-              max={35}
-              value={temp}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "" || v === "-") {
-                  setTemp(v);
-                  return;
-                }
-                const num = Number(v);
-                if (!Number.isNaN(num)) setTemp(Math.min(35, Math.max(-25, num)));
-              }}
-              onBlur={() => {
-                if (temp === "" || temp === "-" || Number.isNaN(Number(temp))) setTemp(12);
-              }}
-              className="w-full text-center text-2xl font-medium bg-[#fdfbf7] border border-[#e3d8c4] rounded-xl py-2.5 outline-none focus:ring-2 focus:ring-[#e0563a]/30"
-            />
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-[#a89a82]">°C</span>
-          </div>
-          <button
-            onClick={() => setTemp((t) => Math.min(35, t + 1))}
-            className="w-11 h-11 shrink-0 rounded-full bg-[#fdfbf7] border border-[#e3d8c4] flex items-center justify-center text-lg text-[#5a5042] active:scale-95"
-            aria-label="Увеличить на 1 градус"
-          >
-            +
-          </button>
-        </div>
-      </section>
-
-      <section className="mb-5">
+        )}
         <button
           onClick={() => setRain((r) => !r)}
-          className="w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border"
           style={
             rain
               ? { backgroundColor: "#c97b5f", color: "#ffffff", borderColor: "#c97b5f" }
               : { backgroundColor: "#fdfbf7", borderColor: "#e3d8c4", color: "#5a5042" }
           }
         >
-          <span className="flex items-center gap-2 text-sm">
-            <CloudRain size={16} />
-            Дождь или снег
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="text-xs" style={{ color: rain ? "#f6f1e8" : "#a89a82" }}>
-              {rain ? "Да" : "Нет"}
-            </span>
-            <span
-              className="w-9 h-5 rounded-full relative transition-colors"
-              style={{ backgroundColor: rain ? "#e0563a" : "#d9c9ac" }}
-            >
-              <span
-                className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                style={{ backgroundColor: "#ffffff", left: rain ? "1.125rem" : "0.125rem" }}
-              />
-            </span>
-          </span>
+          <CloudRain size={14} />
+          {rain ? "Дождь/снег" : "Без осадков"}
         </button>
       </section>
 
+      {/* Тип дня */}
       <section className="mb-4">
         <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Тип дня</label>
         <div className="mt-2 grid grid-cols-2 gap-2">
@@ -2045,6 +2349,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
         </div>
       </section>
 
+      {/* Конкретный сценарий внутри типа дня */}
       {activeDayType && (
         <section className="mb-6">
           <label className="text-xs uppercase tracking-wider text-[#8a7d6a]">Уточните событие</label>
@@ -2100,7 +2405,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned }) {
 }
 
 function OutfitVariant({ index, result }) {
-  const { outfit, missing, description, colortypeNote } = result;
+  const { outfit, missing, description, colortypeNote, eveningLayer } = result;
   const slots = [
     { key: "outerwear", label: "Верхняя одежда" },
     { key: "dress", label: "Платье" },
@@ -2163,6 +2468,25 @@ function OutfitVariant({ index, result }) {
         </div>
       )}
 
+      {eveningLayer && (
+        <div className="mt-3 flex items-start gap-2.5 bg-[#e8eef0] rounded-xl px-3.5 py-2.5">
+          {eveningLayer.item.photo ? (
+            <img
+              src={eveningLayer.item.photo}
+              alt={eveningLayer.item.subcategory}
+              className="w-10 h-10 rounded-lg object-cover shrink-0"
+            />
+          ) : (
+            <Umbrella size={14} className="text-[#4a6b78] mt-0.5 shrink-0" />
+          )}
+          <p className="text-sm text-[#3a5560]">
+            К {eveningLayer.timeLabel} похолодает до {eveningLayer.temp}°C — возьмите с собой{" "}
+            <strong>{eveningLayer.item.subcategory.toLowerCase()}</strong>
+            {eveningLayer.item.name ? ` («${eveningLayer.item.name}»)` : ""}.
+          </p>
+        </div>
+      )}
+
       {missing && missing.length > 0 && (
         <div className="mt-3 bg-[#f0e6d4] border border-[#e3d8c4] rounded-xl px-4 py-3">
           <p className="text-sm text-[#6b5a3f]">
@@ -2174,6 +2498,7 @@ function OutfitVariant({ index, result }) {
   );
 }
 
+// ---- Онбординг: только пол, всё остальное — позже в профиле ----
 function OnboardingScreen({ onDone }) {
   const [gender, setGender] = useState(null);
 
@@ -2276,6 +2601,7 @@ function SwatchButton({ color, active, onClick }) {
   );
 }
 
+// ---- Экран профиля: просмотр и редактирование, включая необязательные поля ----
 function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
   const [editing, setEditing] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
@@ -2373,6 +2699,7 @@ function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
           </div>
         </FieldBlock>
 
+        {/* Возраст — необязательное поле, доступно только здесь */}
         <FieldBlock label="Возраст (по желанию)">
           <div className="flex flex-wrap gap-2">
             <PillButton
