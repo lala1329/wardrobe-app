@@ -1777,17 +1777,37 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
 
   // Необязательное автораспознавание категории/типа/цвета по первому фото — через Claude API (сервер).
   // Если на фото несколько вещей — показывает список с чекбоксами вместо сразу заполненной формы.
+  // Превращает фото в base64 + mediaType независимо от того, это уже готовая data:-строка
+  // (новая вещь, фото только что выбрано) или ссылка на файл в облаке (существующая вещь,
+  // редактирование) — AI-распознавание должно работать одинаково в обоих случаях.
+  async function photoToBase64(photoSrc) {
+    const directMatch = /^data:(.+?);base64,(.+)$/.exec(photoSrc);
+    if (directMatch) {
+      return { mediaType: directMatch[1], imageBase64: directMatch[2] };
+    }
+    // Это ссылка (URL) — скачиваем сам файл и конвертируем в base64 на клиенте
+    const response = await fetch(photoSrc);
+    if (!response.ok) throw new Error("Не удалось загрузить фото для распознавания");
+    const blob = await response.blob();
+    const mediaType = blob.type || "image/jpeg";
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
+    if (!match) throw new Error("Не удалось преобразовать фото для распознавания");
+    return { mediaType: match[1], imageBase64: match[2] };
+  }
+
   async function handleRecognize() {
     if (photos.length === 0) return;
     setRecognizeStatus("loading");
     setRecognizeSuggestion(null);
     setMultiItems(null);
     try {
-      const dataUrl = photos[0];
-      const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
-      if (!match) throw new Error("Неподходящий формат фото");
-      const mediaType = match[1];
-      const imageBase64 = match[2];
+      const { mediaType, imageBase64 } = await photoToBase64(photos[0]);
 
       const response = await fetch("/api/recognize-item", {
         method: "POST",
@@ -1821,11 +1841,14 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   // Уточняющее распознавание именно выбранной вещи (передаём подсказку focusHint),
   // чтобы получить точную категорию/тип/цвет конкретно для неё.
   async function recognizeFocused(itemLabel) {
-    const dataUrl = photos[0];
-    const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
-    if (!match) return null;
-    const mediaType = match[1];
-    const imageBase64 = match[2];
+    let mediaType, imageBase64;
+    try {
+      const result = await photoToBase64(photos[0]);
+      mediaType = result.mediaType;
+      imageBase64 = result.imageBase64;
+    } catch (e) {
+      return null;
+    }
 
     const response = await fetch("/api/recognize-item", {
       method: "POST",
