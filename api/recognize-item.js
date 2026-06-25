@@ -1,9 +1,9 @@
-// Серверная функция Vercel: распознаёт категорию, тип и цвет вещи по фото через Claude API.
+// Серверная функция Vercel: распознаёт предметы одежды на фото через Claude API.
 // Ключ ANTHROPIC_API_KEY хранится в Environment Variables проекта на Vercel — он никогда
 // не попадает в браузер пользователя, запрос идёт только с сервера.
 //
-// Базовая версия: категория + подкатегория + цвет (один). Без сезона/принта/фасона —
-// это будет добавлено отдельно на следующем этапе.
+// Может вернуть ОДНУ вещь или СПИСОК вещей, если на фото несколько предметов одежды
+// (например кофта + леггинсы + кроссовки на одном фото с человеком).
 
 const CATEGORY_IDS = ["tops", "bottoms", "dresses", "outerwear", "shoes", "bags", "accessories"];
 
@@ -45,6 +45,72 @@ const COLOR_IDS = [
   "burgundy", "pink", "purple", "lavender", "silver", "multi",
 ];
 
+const SEASON_IDS = ["winter", "demi", "summer"];
+const SILHOUETTE_IDS = ["fitted", "loose", "oversized", "regular"];
+const LENGTH_IDS = ["mini", "midi", "maxi", "short", "long", "regular"];
+const STYLE_IDS = ["casual", "classic", "romantic", "sporty", "business"];
+
+function buildSystemPrompt() {
+  const allSubcategories = Object.entries(SUBCATEGORIES_BY_CATEGORY)
+    .map(([cat, subs]) => `${cat}: ${subs.join(", ")}`)
+    .join("\n");
+
+  return `Ты помогаешь распознать предметы одежды на фото для приложения "Мой гардероб".
+На фото может быть ОДНА вещь, либо ЧЕЛОВЕК, на котором надето НЕСКОЛЬКО разных вещей
+(например кофта + леггинсы + кроссовки одновременно). Найди КАЖДЫЙ отдельный предмет одежды,
+который чётко виден на фото, и опиши каждый отдельно.
+
+Допустимые категории и их подкатегории:
+${allSubcategories}
+
+Допустимые цвета (id): ${COLOR_IDS.join(", ")}
+Допустимые сезоны/уровни теплоты (seasonId): winter (тёплая, зимняя вещь), demi (умеренная, межсезонная), summer (лёгкая, летняя вещь)
+Допустимые силуэты (silhouetteId): fitted (облегающий), loose (свободный), oversized (оверсайз), regular (обычный)
+Допустимая длина/пропорции (lengthId): mini, midi, maxi, short, long, regular — выбери то, что применимо к типу вещи (для платьев/юбок mini/midi/maxi, для верха short/regular/long, для остального regular)
+Допустимый стиль (styleId): casual (повседневный), classic (классический/строгий), romantic (романтичный), sporty (спортивный), business (деловой)
+
+Правила:
+- Если подкатегория или основной цвет конкретной вещи НЕ соответствуют точно ни одному варианту из списков выше — не выбирай ближайший силой, а укажи suggestedNew с понятным русским названием того, что ты реально видишь.
+- Если на вещи есть принт/узор (горошек, цветы, клетка, полоска и т.п.) — заполни поле "patternColorIds": список ВСЕХ цветов (из допустимых color id), которые реально участвуют в этом узоре (например фон + рисунок). Если вещь однотонная — оставь patternColorIds пустым массивом [].
+- seasonId, silhouetteId, lengthId, styleId — оцени по тому, что видно на фото (плотность ткани, рукава, посадка, общее настроение вещи). Если оценить невозможно — поставь null, не угадывай вслепую.
+- Не придумывай вещи, которых не видно на фото. Не дублируй одну и ту же вещь дважды.
+- Отвечай ТОЛЬКО валидным JSON, без markdown-разметки, без преамбулы, без комментариев.
+- Формат ответа — ВСЕГДА массив объектов, даже если найдена только одна вещь:
+[
+  {
+    "itemLabel": "короткое название на русском для показа в списке, например «Леггинсы чёрные»",
+    "categoryId": "одно из: tops, bottoms, dresses, outerwear, shoes, bags, accessories",
+    "subcategory": "точное значение из списка подкатегорий ИЛИ null, если не подходит",
+    "suggestedNewSubcategory": "название на русском, если subcategory выше null, иначе null",
+    "colorId": "одно из допустимых color id ИЛИ null, если не подходит",
+    "suggestedNewColorLabel": "название цвета на русском, если colorId выше null, иначе null",
+    "patternColorIds": ["список цветов узора, если есть принт, иначе []"],
+    "seasonId": "winter | demi | summer | null",
+    "silhouetteId": "fitted | loose | oversized | regular | null",
+    "lengthId": "mini | midi | maxi | short | long | regular | null",
+    "styleId": "casual | classic | romantic | sporty | business | null",
+    "confidence": "high | medium | low"
+  }
+]`;
+}
+
+function sanitizeItem(item) {
+  const safe = { ...item };
+  if (safe.categoryId && !CATEGORY_IDS.includes(safe.categoryId)) safe.categoryId = null;
+  if (safe.colorId && !COLOR_IDS.includes(safe.colorId)) safe.colorId = null;
+  if (safe.seasonId && !SEASON_IDS.includes(safe.seasonId)) safe.seasonId = null;
+  if (safe.silhouetteId && !SILHOUETTE_IDS.includes(safe.silhouetteId)) safe.silhouetteId = null;
+  if (safe.lengthId && !LENGTH_IDS.includes(safe.lengthId)) safe.lengthId = null;
+  if (safe.styleId && !STYLE_IDS.includes(safe.styleId)) safe.styleId = null;
+  if (Array.isArray(safe.patternColorIds)) {
+    safe.patternColorIds = safe.patternColorIds.filter((c) => COLOR_IDS.includes(c));
+  } else {
+    safe.patternColorIds = [];
+  }
+  if (!safe.itemLabel) safe.itemLabel = safe.subcategory || safe.suggestedNewSubcategory || "Вещь";
+  return safe;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Метод не поддерживается" });
@@ -57,36 +123,17 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { imageBase64, mediaType } = req.body || {};
+  const { imageBase64, mediaType, focusHint } = req.body || {};
   if (!imageBase64 || !mediaType) {
     res.status(400).json({ error: "Не передано изображение" });
     return;
   }
 
-  const allSubcategories = Object.entries(SUBCATEGORIES_BY_CATEGORY)
-    .map(([cat, subs]) => `${cat}: ${subs.join(", ")}`)
-    .join("\n");
-
-  const systemPrompt = `Ты помогаешь распознать предмет одежды на фото для приложения "Мой гардероб".
-Тебе нужно определить категорию, подкатегорию (тип) и основной цвет вещи.
-
-Допустимые категории и их подкатегории:
-${allSubcategories}
-
-Допустимые цвета (id): ${COLOR_IDS.join(", ")}
-
-Правила:
-- Если подкатегория или цвет вещи НЕ соответствуют точно ни одному варианту из списков выше — не выбирай ближайший силой, а укажи suggestedNew с понятным русским названием того, что ты реально видишь.
-- Отвечай ТОЛЬКО валидным JSON, без markdown-разметки, без преамбулы, без комментариев.
-- Формат ответа:
-{
-  "categoryId": "одно из: tops, bottoms, dresses, outerwear, shoes, bags, accessories",
-  "subcategory": "точное значение из списка подкатегорий ИЛИ null, если не подходит",
-  "suggestedNewSubcategory": "название на русском, если subcategory выше null, иначе null",
-  "colorId": "одно из допустимых color id ИЛИ null, если не подходит",
-  "suggestedNewColorLabel": "название цвета на русском, если colorId выше null, иначе null",
-  "confidence": "high | medium | low"
-}`;
+  // focusHint — необязательная подсказка: "сосредоточься именно на леггинсах",
+  // используется при повторном, уточняющем распознавании уже выбранной вещи из списка.
+  const userText = focusHint
+    ? `На фото несколько вещей. Сосредоточься ТОЛЬКО на этой: "${focusHint}". Опиши именно её, в формате массива из одного объекта.`
+    : "Найди все отдельные предметы одежды на фото и опиши каждый по правилам выше. Ответь только JSON-массивом.";
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -98,8 +145,8 @@ ${allSubcategories}
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 400,
-        system: systemPrompt,
+        max_tokens: 1200,
+        system: buildSystemPrompt(),
         messages: [
           {
             role: "user",
@@ -108,10 +155,7 @@ ${allSubcategories}
                 type: "image",
                 source: { type: "base64", media_type: mediaType, data: imageBase64 },
               },
-              {
-                type: "text",
-                text: "Распознай эту вещь по правилам выше и ответь только JSON.",
-              },
+              { type: "text", text: userText },
             ],
           },
         ],
@@ -140,11 +184,11 @@ ${allSubcategories}
       return;
     }
 
-    // Базовая проверка на всякий случай — не доверяем AI вслепую
-    if (parsed.categoryId && !CATEGORY_IDS.includes(parsed.categoryId)) parsed.categoryId = null;
-    if (parsed.colorId && !COLOR_IDS.includes(parsed.colorId)) parsed.colorId = null;
+    // На случай, если AI всё же вернул один объект, а не массив — оборачиваем сами
+    const itemsArray = Array.isArray(parsed) ? parsed : [parsed];
+    const sanitized = itemsArray.map(sanitizeItem);
 
-    res.status(200).json(parsed);
+    res.status(200).json({ items: sanitized });
   } catch (e) {
     res.status(500).json({ error: "Внутренняя ошибка распознавания", details: String(e) });
   }
