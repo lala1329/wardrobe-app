@@ -1416,7 +1416,7 @@ function ItemCard({ item, allItems, onRemove, pickMode, pinned, onTogglePin, onO
                 e.stopPropagation();
                 setConfirmingDelete(true);
               }}
-              className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity"
+              className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/40 text-white flex items-center justify-center opacity-70 active:opacity-100 transition-opacity"
               aria-label="Удалить вещь"
             >
               <X size={14} />
