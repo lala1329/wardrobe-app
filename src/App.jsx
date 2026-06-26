@@ -345,6 +345,33 @@ function getUserLocation() {
   });
 }
 
+// Новые подкатегории, которые AI предложил и пользователь подтвердил, сохраняются
+// постоянно в localStorage (отдельно от данных в Supabase) — чтобы при следующем
+// добавлении вещи они уже были видны в общем списке кнопок типов, а не предлагались заново.
+const CUSTOM_SUBCATEGORIES_KEY = "wardrobe_custom_subcategories";
+
+function loadCustomSubcategories() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_SUBCATEGORIES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveCustomSubcategory(categoryId, subcategoryLabel) {
+  try {
+    const current = loadCustomSubcategories();
+    const list = current[categoryId] || [];
+    if (!list.includes(subcategoryLabel)) {
+      current[categoryId] = [...list, subcategoryLabel];
+      localStorage.setItem(CUSTOM_SUBCATEGORIES_KEY, JSON.stringify(current));
+    }
+  } catch (e) {
+    // localStorage недоступен (приватный режим и т.п.) — просто не сохраняем постоянно
+  }
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -1747,9 +1774,14 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   const [multiItems, setMultiItems] = useState(null); // массив вещей, если AI нашёл больше одной на фото
   const [selectedMultiLabels, setSelectedMultiLabels] = useState([]); // какие из multiItems отмечены чекбоксом
   const [extraItemsToAdd, setExtraItemsToAdd] = useState([]); // вещи, которые нужно добавить после текущей (очередь)
+  const [customSubcategories, setCustomSubcategories] = useState(() => loadCustomSubcategories());
   const fileInputRef = useRef(null);
 
-  const category = CATEGORIES.find((c) => c.id === categoryId);
+  const baseCategory = CATEGORIES.find((c) => c.id === categoryId);
+  // Список типов для текущей категории = встроенные + ранее добавленные пользовательские
+  const category = baseCategory
+    ? { ...baseCategory, sub: [...baseCategory.sub, ...(customSubcategories[categoryId] || [])] }
+    : null;
   const color = COLORS.find((c) => c.id === colorId);
 
   // Применяет результат распознавания одной вещи к форме (категория/тип/цвет, либо подсказка про новый вариант)
@@ -2179,9 +2211,17 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
             )}
 
             {recognizeStatus === "error" && (
-              <p className="text-xs text-[#a8362a] mt-2">
-                Не удалось распознать вещь — заполните поля вручную.
-              </p>
+              <div className="mt-3 bg-[#f0e6d4] border border-[#e3d8c4] rounded-xl px-3.5 py-3 flex items-center justify-between gap-2">
+                <p className="text-sm text-[#6b5a3f]">
+                  Не удалось распознать вещь — заполните поля вручную или попробуйте снова.
+                </p>
+                <button
+                  onClick={handleRecognize}
+                  className="shrink-0 text-sm font-medium text-[#e0563a] underline"
+                >
+                  Повторить
+                </button>
+              </div>
             )}
 
             {/* На фото нашлось несколько вещей — выбор чекбоксами, что добавить */}
@@ -2266,6 +2306,13 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
                       if (recognizeSuggestion.type === "subcategory" && recognizeSuggestion.categoryId) {
                         setCategoryId(recognizeSuggestion.categoryId);
                         setSubcategory(recognizeSuggestion.label);
+                        // Сохраняем новый тип постоянно — он появится в списке кнопок для будущих вещей
+                        saveCustomSubcategory(recognizeSuggestion.categoryId, recognizeSuggestion.label);
+                        setCustomSubcategories(loadCustomSubcategories());
+                      } else if (recognizeSuggestion.type === "color") {
+                        // Новый цвет не входит в фиксированную палитру свотчей — оставляем выбор
+                        // цвета пользователю вручную, но запоминаем предложенное название в заметке
+                        setNote((prev) => (prev ? prev : `Цвет: ${recognizeSuggestion.label}`));
                       }
                       setRecognizeSuggestion(null);
                     }}
