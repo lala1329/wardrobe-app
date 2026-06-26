@@ -364,8 +364,8 @@ function saveCustomSubcategory(categoryId, subcategoryLabel) {
     const current = loadCustomSubcategories();
     const list = current[categoryId] || [];
     if (!list.includes(subcategoryLabel)) {
-      current[categoryId] = [...list, subcategoryLabel];
-      localStorage.setItem(CUSTOM_SUBCATEGORIES_KEY, JSON.stringify(current));
+      const updated = { ...current, [categoryId]: [...list, subcategoryLabel] };
+      localStorage.setItem(CUSTOM_SUBCATEGORIES_KEY, JSON.stringify(updated));
     }
   } catch (e) {
     // localStorage недоступен (приватный режим и т.п.) — просто не сохраняем постоянно
