@@ -56,6 +56,11 @@ export async function loadWardrobeItems(userId) {
     lengthId: row.length_id || null,
     styleId: row.style_id || null,
     wearCount: row.wear_count || 0,
+    // Подсказка от AI про новый тип/цвет, которого нет в списках приложения —
+    // показывается в карточке вещи, чтобы пользователь не забыл вручную добавить
+    // этот вариант в код (CATEGORIES / COLORS). Не используется ни в подборе образа,
+    // ни в фильтрах — чисто информационная метка для самой вещи.
+    aiSuggestion: row.ai_suggestion || null,
     photos: row.photos || [],
     photo: row.photos && row.photos.length > 0 ? row.photos[0] : null,
     name: row.name,
@@ -84,6 +89,7 @@ export async function addWardrobeItem(userId, item, photoUrls) {
       length_id: item.lengthId || null,
       style_id: item.styleId || null,
       wear_count: item.wearCount || 0,
+      ai_suggestion: item.aiSuggestion || null,
       photos: photoUrls || [],
       name: item.name || null,
       brand: item.brand || null,
@@ -114,6 +120,7 @@ export async function updateWardrobeItem(itemId, updates) {
   if (updates.lengthId !== undefined) dbUpdates.length_id = updates.lengthId;
   if (updates.styleId !== undefined) dbUpdates.style_id = updates.styleId;
   if (updates.wearCount !== undefined) dbUpdates.wear_count = updates.wearCount;
+  if (updates.aiSuggestion !== undefined) dbUpdates.ai_suggestion = updates.aiSuggestion;
   if (updates.photos !== undefined) dbUpdates.photos = updates.photos;
   if (updates.name !== undefined) dbUpdates.name = updates.name;
   if (updates.brand !== undefined) dbUpdates.brand = updates.brand;
