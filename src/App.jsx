@@ -1774,11 +1774,15 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   const [multiItems, setMultiItems] = useState(null); // массив вещей, если AI нашёл больше одной на фото
   const [selectedMultiLabels, setSelectedMultiLabels] = useState([]); // какие из multiItems отмечены чекбоксом
   const [extraItemsToAdd, setExtraItemsToAdd] = useState([]); // вещи, которые нужно добавить после текущей (очередь)
-  const [customSubcategories, setCustomSubcategories] = useState(() => loadCustomSubcategories());
+  // Счётчик-триггер: при изменении заставляет перечитать localStorage и обновить список типов на экране
+  const [customSubcategoriesVersion, setCustomSubcategoriesVersion] = useState(0);
+  const customSubcategories = loadCustomSubcategories();
   const fileInputRef = useRef(null);
 
   const baseCategory = CATEGORIES.find((c) => c.id === categoryId);
-  // Список типов для текущей категории = встроенные + ранее добавленные пользовательские
+  // Список типов для текущей категории = встроенные + ранее добавленные пользовательские.
+  // customSubcategoriesVersion здесь не используется напрямую, но его изменение вызывает
+  // повторный рендер компонента, из-за чего customSubcategories выше пересчитывается заново.
   const category = baseCategory
     ? { ...baseCategory, sub: [...baseCategory.sub, ...(customSubcategories[categoryId] || [])] }
     : null;
@@ -2308,7 +2312,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
                         setSubcategory(recognizeSuggestion.label);
                         // Сохраняем новый тип постоянно — он появится в списке кнопок для будущих вещей
                         saveCustomSubcategory(recognizeSuggestion.categoryId, recognizeSuggestion.label);
-                        setCustomSubcategories(loadCustomSubcategories());
+                        setCustomSubcategoriesVersion((v) => v + 1);
                       } else if (recognizeSuggestion.type === "color") {
                         // Новый цвет не входит в фиксированную палитру свотчей — оставляем выбор
                         // цвета пользователю вручную, но запоминаем предложенное название в заметке
