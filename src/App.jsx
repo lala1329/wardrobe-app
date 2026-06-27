@@ -864,6 +864,71 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved"
   const [storageDiagnostic, setStorageDiagnostic] = useState(null);
 
+  // iOS Safari часто игнорирует CSS overscroll-behavior для системного pull-to-refresh,
+  // поэтому блокируем его вручную через touch-события: если палец движется вниз, а
+  // ближайший скроллируемый контейнер уже находится в самом верху (scrollTop === 0),
+  // отменяем событие — это останавливает "проваливание" жеста в браузерный refresh.
+  useEffect(() => {
+    let lastY = 0;
+
+    function findScrollableAncestor(node) {
+      let el = node;
+      while (el && el !== document.body) {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        if ((overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight) {
+          return el;
+        }
+        el = el.parentElement;
+      }
+      return null;
+    }
+
+    function onTouchStart(e) {
+      if (e.touches.length !== 1) return;
+      lastY = e.touches[0].clientY;
+    }
+
+    function onTouchMove(e) {
+      if (e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      const movingDown = currentY > lastY; // палец вниз по экрану → контент тянут к началу (pull-to-refresh сверху)
+      const movingUp = currentY < lastY; // палец вверх по экрану → контент тянут дальше конца (это и есть жалоба пользователя)
+      lastY = currentY;
+      if (!movingDown && !movingUp) return;
+
+      const scrollable = findScrollableAncestor(e.target);
+
+      if (movingDown) {
+        const atTop = !scrollable || scrollable.scrollTop <= 0;
+        if (atTop) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      if (movingUp) {
+        // Если внутри есть скроллируемый контейнер, который ещё не дошёл до своего
+        // нижнего края — даём ему долистать нормально, ничего не блокируем.
+        // Только когда он УЖЕ у самого низа (или скроллируемого контейнера нет вовсе),
+        // дальнейшее движение вверх не должно "проваливаться" в браузерный bounce.
+        const atBottom =
+          !scrollable || scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1;
+        if (atBottom) {
+          e.preventDefault();
+        }
+      }
+    }
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart);
+      document.removeEventListener("touchmove", onTouchMove);
+    };
+  }, []);
+
   // Проверяем текущую сессию при запуске, и слушаем изменения (вход/выход)
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -1161,7 +1226,10 @@ export default function App() {
           >
             <CategoryRail active={activeCategory} setActive={setActiveCategory} />
 
-            <main className="flex-1 min-w-0 pb-32">
+            <main
+              className="flex-1 min-w-0"
+              style={{ paddingBottom: "calc(8rem + env(safe-area-inset-bottom, 0px))" }}
+            >
               {filtered.length === 0 ? (
                 <EmptyState hasAny={items.length > 0} />
               ) : (
@@ -1804,9 +1872,6 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   // сохраняется вместе с вещью (поле aiSuggestion), чтобы её было видно в карточке вещи позже,
   // когда придёт время вручную добавить новый тип/цвет в код (CATEGORIES / COLORS).
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(editItem?.aiSuggestion || null);
-  // ВРЕМЕННАЯ ДИАГНОСТИКА: показывает точный ответ сервера или текст исключения,
-  // чтобы понять, почему распознавание "тихо" ничего не делает. Убрать после починки.
-  const [recognizeDebugInfo, setRecognizeDebugInfo] = useState(null);
   const [multiItems, setMultiItems] = useState(null); // массив вещей, если AI нашёл больше одной на фото
   const [selectedMultiLabels, setSelectedMultiLabels] = useState([]); // какие из multiItems отмечены чекбоксом
   const [extraItemsToAdd, setExtraItemsToAdd] = useState([]); // вещи, которые нужно добавить после текущей (очередь)
@@ -1895,7 +1960,6 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     setRecognizeStatus("loading");
     setRecognizeSuggestion(null);
     setMultiItems(null);
-    setRecognizeDebugInfo(null);
     try {
       const { mediaType, imageBase64 } = await photoToBase64(photos[0]);
 
@@ -1904,21 +1968,9 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64, mediaType }),
       });
-      const rawText = await response.text();
-      if (!response.ok) {
-        setRecognizeDebugInfo(`HTTP ${response.status}: ${rawText.slice(0, 500)}`);
-        throw new Error("Сервер вернул ошибку");
-      }
-      let result;
-      try {
-        result = JSON.parse(rawText);
-      } catch (parseErr) {
-        setRecognizeDebugInfo(`Не удалось разобрать JSON ответа: ${rawText.slice(0, 500)}`);
-        setRecognizeStatus("error");
-        return;
-      }
+      if (!response.ok) throw new Error("Сервер вернул ошибку");
+      const result = await response.json();
       const items = result.items || [];
-      setRecognizeDebugInfo(`Ответ сервера (HTTP ${response.status}): ${JSON.stringify(result).slice(0, 800)}`);
 
       if (items.length === 0) {
         // Сервер ответил успешно, но не нашёл на фото ни одной вещи —
@@ -1934,7 +1986,6 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
         setRecognizeStatus("done");
       }
     } catch (e) {
-      setRecognizeDebugInfo((prev) => prev || `Исключение: ${e?.message || String(e)}`);
       setRecognizeStatus("error");
     }
   }
@@ -2059,7 +2110,6 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     setPrice("");
     setRecognizeSuggestion(null);
     setPendingAiSuggestion(null);
-    setRecognizeDebugInfo(null);
     setIsSubmitting(false);
     // фото оставляем — следующая вещь распознаётся с того же снимка
   }
@@ -2286,17 +2336,6 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
                   </>
                 )}
               </button>
-            )}
-
-            {/* ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ БЛОК — показывает точный ответ сервера, чтобы
-                понять причину "тихого" провала распознавания. Убрать после починки. */}
-            {recognizeDebugInfo && (
-              <div className="mt-3 bg-[#dce8d4] border border-[#b8cba8] rounded-xl px-3.5 py-3">
-                <p className="text-xs font-medium text-[#3a4f2f] mb-1">Диагностика (временно):</p>
-                <p className="text-xs text-[#3a4f2f]" style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
-                  {recognizeDebugInfo}
-                </p>
-              </div>
             )}
 
             {recognizeStatus === "error" && (
@@ -2781,8 +2820,12 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned, onMarkWor
 
   return (
     <div
-      className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-4"
-      style={{ colorScheme: "light", overscrollBehaviorY: "contain" }}
+      className="flex-1 overflow-y-auto max-w-2xl w-full mx-auto px-4"
+      style={{
+        colorScheme: "light",
+        overscrollBehaviorY: "contain",
+        paddingBottom: "calc(6rem + env(safe-area-inset-bottom, 0px))",
+      }}
     >
       <header className="pt-6 pb-4">
         <div className="flex items-center justify-between">
@@ -3251,7 +3294,14 @@ function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
 
   if (editing) {
     return (
-      <div className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-5 pt-6" style={{ colorScheme: "light", overscrollBehaviorY: "contain" }}>
+      <div
+        className="flex-1 overflow-y-auto max-w-2xl w-full mx-auto px-5 pt-6"
+        style={{
+          colorScheme: "light",
+          overscrollBehaviorY: "contain",
+          paddingBottom: "calc(6rem + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
         <h1 className="text-[26px] leading-tight mb-5" style={{ fontFamily: "'Georgia', serif" }}>
           Редактировать профиль
         </h1>
@@ -3369,7 +3419,14 @@ function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-5 pt-6" style={{ colorScheme: "light", overscrollBehaviorY: "contain" }}>
+    <div
+      className="flex-1 overflow-y-auto max-w-2xl w-full mx-auto px-5 pt-6"
+      style={{
+        colorScheme: "light",
+        overscrollBehaviorY: "contain",
+        paddingBottom: "calc(6rem + env(safe-area-inset-bottom, 0px))",
+      }}
+    >
       <h1 className="text-[26px] leading-tight mb-5" style={{ fontFamily: "'Georgia', serif" }}>
         Профиль
       </h1>
