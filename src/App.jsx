@@ -1114,6 +1114,7 @@ export default function App() {
         backgroundColor: "#f6f1e8",
         isolation: "isolate",
         colorScheme: "light",
+        overscrollBehaviorY: "contain",
       }}
     >
       {storageDiagnostic && (
@@ -1154,7 +1155,10 @@ export default function App() {
             saveStatus={saveStatus}
           />
 
-          <div className="flex-1 flex max-w-2xl w-full mx-auto px-4 pt-1 gap-3 min-h-0 overflow-y-auto">
+          <div
+            className="flex-1 flex max-w-2xl w-full mx-auto px-4 pt-1 gap-3 min-h-0 overflow-y-auto"
+            style={{ overscrollBehaviorY: "contain" }}
+          >
             <CategoryRail active={activeCategory} setActive={setActiveCategory} />
 
             <main className="flex-1 min-w-0 pb-32">
@@ -1820,19 +1824,31 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   // Применяет результат распознавания одной вещи к форме (категория/тип/цвет, либо подсказка про новый вариант).
   // Новые типы/цвета, которых нет в списках, НЕ добавляются автоматически — только показываются
   // как информационная подсказка (recognizeSuggestion), пользователь добавляет их в код вручную.
+  // Возвращает true, если результат содержал хоть что-то полезное (категорию, тип,
+  // цвет или предложение нового варианта) — используется, чтобы отличить "AI ничего
+  // не разглядел на фото" от обычного успешного распознавания, и показать сообщение,
+  // а не оставлять пользователя со крутящимся спиннером без всякого результата.
   function applyRecognizedItem(result) {
-    if (result.categoryId) setCategoryId(result.categoryId);
+    let appliedSomething = false;
+    if (result.categoryId) {
+      setCategoryId(result.categoryId);
+      appliedSomething = true;
+    }
     if (result.subcategory) {
       setSubcategory(result.subcategory);
+      appliedSomething = true;
     } else if (result.suggestedNewSubcategory) {
       setRecognizeSuggestion({ type: "subcategory", label: result.suggestedNewSubcategory, categoryId: result.categoryId });
       setPendingAiSuggestion(`Тип: ${result.suggestedNewSubcategory}`);
+      appliedSomething = true;
     }
     if (result.colorId) {
       setColorId(result.colorId);
+      appliedSomething = true;
     } else if (result.suggestedNewColorLabel) {
       setRecognizeSuggestion((prev) => prev || { type: "color", label: result.suggestedNewColorLabel });
       setPendingAiSuggestion((prev) => prev || `Цвет: ${result.suggestedNewColorLabel}`);
+      appliedSomething = true;
     }
     // Сезон/теплоту AI определяет сам по виду вещи — пользователь раньше часто забывал его выставлять
     if (result.seasonId) setSeasonId(result.seasonId);
@@ -1842,6 +1858,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     if (result.silhouetteId) setSilhouetteId(result.silhouetteId);
     if (result.lengthId) setLengthId(result.lengthId);
     if (result.styleId) setStyleId(result.styleId);
+    return appliedSomething;
   }
 
   // Необязательное автораспознавание категории/типа/цвета по первому фото — через Claude API (сервер).
@@ -1887,9 +1904,13 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       const result = await response.json();
       const items = result.items || [];
 
-      if (items.length <= 1) {
-        if (items.length === 1) applyRecognizedItem(items[0]);
-        setRecognizeStatus("done");
+      if (items.length === 0) {
+        // Сервер ответил успешно, но не нашёл на фото ни одной вещи —
+        // раньше это выглядело как "спиннер покрутился и пропал без следа"
+        setRecognizeStatus("empty");
+      } else if (items.length === 1) {
+        const applied = applyRecognizedItem(items[0]);
+        setRecognizeStatus(applied ? "done" : "empty");
       } else {
         // Несколько вещей на фото — показываем список для выбора, форму не трогаем
         setMultiItems(items);
@@ -2253,6 +2274,21 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
               <div className="mt-3 bg-[#f0e6d4] border border-[#e3d8c4] rounded-xl px-3.5 py-3 flex items-center justify-between gap-2">
                 <p className="text-sm text-[#6b5a3f]">
                   Не удалось распознать вещь — заполните поля вручную или попробуйте снова.
+                </p>
+                <button
+                  onClick={handleRecognize}
+                  className="shrink-0 text-sm font-medium text-[#e0563a] underline"
+                >
+                  Повторить
+                </button>
+              </div>
+            )}
+
+            {recognizeStatus === "empty" && (
+              <div className="mt-3 bg-[#f0e6d4] border border-[#e3d8c4] rounded-xl px-3.5 py-3 flex items-center justify-between gap-2">
+                <p className="text-sm text-[#6b5a3f]">
+                  AI не смог разглядеть вещь на этом фото — попробуйте фото получше (крупнее,
+                  без обрезки) или заполните поля вручную.
                 </p>
                 <button
                   onClick={handleRecognize}
@@ -2717,7 +2753,7 @@ function OutfitScreen({ items, profile, pinnedIds = [], onClearPinned, onMarkWor
   return (
     <div
       className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-4"
-      style={{ colorScheme: "light" }}
+      style={{ colorScheme: "light", overscrollBehaviorY: "contain" }}
     >
       <header className="pt-6 pb-4">
         <div className="flex items-center justify-between">
@@ -3186,7 +3222,7 @@ function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
 
   if (editing) {
     return (
-      <div className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-5 pt-6" style={{ colorScheme: "light" }}>
+      <div className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-5 pt-6" style={{ colorScheme: "light", overscrollBehaviorY: "contain" }}>
         <h1 className="text-[26px] leading-tight mb-5" style={{ fontFamily: "'Georgia', serif" }}>
           Редактировать профиль
         </h1>
@@ -3304,7 +3340,7 @@ function ProfileScreen({ profile, setProfile, onResetAll, onSignOut }) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-5 pt-6" style={{ colorScheme: "light" }}>
+    <div className="flex-1 overflow-y-auto pb-24 max-w-2xl w-full mx-auto px-5 pt-6" style={{ colorScheme: "light", overscrollBehaviorY: "contain" }}>
       <h1 className="text-[26px] leading-tight mb-5" style={{ fontFamily: "'Georgia', serif" }}>
         Профиль
       </h1>
