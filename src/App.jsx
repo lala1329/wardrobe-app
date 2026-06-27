@@ -1804,6 +1804,9 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   // сохраняется вместе с вещью (поле aiSuggestion), чтобы её было видно в карточке вещи позже,
   // когда придёт время вручную добавить новый тип/цвет в код (CATEGORIES / COLORS).
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(editItem?.aiSuggestion || null);
+  // ВРЕМЕННАЯ ДИАГНОСТИКА: показывает точный ответ сервера или текст исключения,
+  // чтобы понять, почему распознавание "тихо" ничего не делает. Убрать после починки.
+  const [recognizeDebugInfo, setRecognizeDebugInfo] = useState(null);
   const [multiItems, setMultiItems] = useState(null); // массив вещей, если AI нашёл больше одной на фото
   const [selectedMultiLabels, setSelectedMultiLabels] = useState([]); // какие из multiItems отмечены чекбоксом
   const [extraItemsToAdd, setExtraItemsToAdd] = useState([]); // вещи, которые нужно добавить после текущей (очередь)
@@ -1892,6 +1895,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     setRecognizeStatus("loading");
     setRecognizeSuggestion(null);
     setMultiItems(null);
+    setRecognizeDebugInfo(null);
     try {
       const { mediaType, imageBase64 } = await photoToBase64(photos[0]);
 
@@ -1900,9 +1904,21 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64, mediaType }),
       });
-      if (!response.ok) throw new Error("Сервер вернул ошибку");
-      const result = await response.json();
+      const rawText = await response.text();
+      if (!response.ok) {
+        setRecognizeDebugInfo(`HTTP ${response.status}: ${rawText.slice(0, 500)}`);
+        throw new Error("Сервер вернул ошибку");
+      }
+      let result;
+      try {
+        result = JSON.parse(rawText);
+      } catch (parseErr) {
+        setRecognizeDebugInfo(`Не удалось разобрать JSON ответа: ${rawText.slice(0, 500)}`);
+        setRecognizeStatus("error");
+        return;
+      }
       const items = result.items || [];
+      setRecognizeDebugInfo(`Ответ сервера (HTTP ${response.status}): ${JSON.stringify(result).slice(0, 800)}`);
 
       if (items.length === 0) {
         // Сервер ответил успешно, но не нашёл на фото ни одной вещи —
@@ -1918,6 +1934,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
         setRecognizeStatus("done");
       }
     } catch (e) {
+      setRecognizeDebugInfo((prev) => prev || `Исключение: ${e?.message || String(e)}`);
       setRecognizeStatus("error");
     }
   }
@@ -2042,6 +2059,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     setPrice("");
     setRecognizeSuggestion(null);
     setPendingAiSuggestion(null);
+    setRecognizeDebugInfo(null);
     setIsSubmitting(false);
     // фото оставляем — следующая вещь распознаётся с того же снимка
   }
@@ -2268,6 +2286,17 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
                   </>
                 )}
               </button>
+            )}
+
+            {/* ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ БЛОК — показывает точный ответ сервера, чтобы
+                понять причину "тихого" провала распознавания. Убрать после починки. */}
+            {recognizeDebugInfo && (
+              <div className="mt-3 bg-[#dce8d4] border border-[#b8cba8] rounded-xl px-3.5 py-3">
+                <p className="text-xs font-medium text-[#3a4f2f] mb-1">Диагностика (временно):</p>
+                <p className="text-xs text-[#3a4f2f]" style={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
+                  {recognizeDebugInfo}
+                </p>
+              </div>
             )}
 
             {recognizeStatus === "error" && (
