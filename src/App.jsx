@@ -19,14 +19,14 @@ const CATEGORIES = [
     label: "Верх",
     shortLabel: "Верх",
     icon: Shirt,
-    sub: ["Футболка", "Рубашка", "Блузка", "Водолазка", "Лонгслив", "Свитер / джемпер", "Жилет"],
+    sub: ["Футболка", "Майка / топ", "Рубашка", "Блузка", "Водолазка", "Лонгслив", "Свитер / джемпер", "Кардиган", "Жилет"],
   },
   {
     id: "bottoms",
     label: "Низ",
     shortLabel: "Низ",
     icon: Columns3,
-    sub: ["Джинсы", "Брюки", "Юбка", "Шорты", "Легинсы", "Спортивные брюки"],
+    sub: ["Джинсы", "Брюки", "Кожаные брюки", "Юбка", "Шорты", "Легинсы", "Спортивные брюки"],
   },
   {
     id: "dresses",
@@ -143,6 +143,17 @@ const COLORS = [
   { id: "purple", label: "Фиолетовый", hex: "#6b4d7a" },
   { id: "lavender", label: "Лавандовый", hex: "#b8a9d9" },
   { id: "silver", label: "Серебряный", hex: "#c4c4c4" },
+  {
+    id: "leopard",
+    label: "Леопардовый",
+    hex:
+      "radial-gradient(circle at 20% 30%, #3a2a1a 12%, transparent 13%), " +
+      "radial-gradient(circle at 60% 20%, #3a2a1a 10%, transparent 11%), " +
+      "radial-gradient(circle at 75% 65%, #3a2a1a 11%, transparent 12%), " +
+      "radial-gradient(circle at 35% 70%, #3a2a1a 10%, transparent 11%), " +
+      "radial-gradient(circle at 50% 45%, #3a2a1a 9%, transparent 10%), " +
+      "linear-gradient(#c9a35f, #c9a35f)",
+  },
   { id: "multi", label: "Принт / разноцветный", hex: "linear-gradient(135deg,#a8362a,#cfa83e,#5b7ea0)" },
 ];
 
@@ -1703,6 +1714,20 @@ function ItemDetailSheet({ item, allItems, onClose, onRemove, onUpdate, onEdit }
             </div>
           )}
 
+          {/* Подсказка AI про новый тип/цвет, которого нет в списках приложения —
+              напоминание, что стоит вручную добавить этот вариант в код (CATEGORIES / COLORS) */}
+          {item.aiSuggestion && (
+            <div className="bg-[#f3e9da] rounded-2xl p-4 flex items-start gap-2">
+              <Sparkles size={14} className="text-[#e0563a] mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs uppercase tracking-wider text-[#8a7d6a] mb-1">На заметку</p>
+                <p className="text-sm text-[#6b5a3f]">
+                  AI предложил новый вариант: <strong>{item.aiSuggestion}</strong> — его пока нет в списке, добавьте вручную в код, если нужно.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Удаление */}
           {!confirmingDelete ? (
             <button
@@ -1770,7 +1795,11 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bgRemoval, setBgRemoval] = useState({}); // { [photoIndex]: "processing" | { original, result } }
   const [recognizeStatus, setRecognizeStatus] = useState(null); // null | "loading" | "error" | "done"
-  const [recognizeSuggestion, setRecognizeSuggestion] = useState(null); // { type: "subcategory"|"color", label } — если AI предложил новый вариант, не входящий в списки
+  const [recognizeSuggestion, setRecognizeSuggestion] = useState(null); // { type: "subcategory"|"color", label } — если AI предложил новый вариант, не входящий в списки (только информационно, без автодобавления)
+  // Та же подсказка, но НЕ исчезает, когда пользователь закрывает информационный блок выше —
+  // сохраняется вместе с вещью (поле aiSuggestion), чтобы её было видно в карточке вещи позже,
+  // когда придёт время вручную добавить новый тип/цвет в код (CATEGORIES / COLORS).
+  const [pendingAiSuggestion, setPendingAiSuggestion] = useState(editItem?.aiSuggestion || null);
   const [multiItems, setMultiItems] = useState(null); // массив вещей, если AI нашёл больше одной на фото
   const [selectedMultiLabels, setSelectedMultiLabels] = useState([]); // какие из multiItems отмечены чекбоксом
   const [extraItemsToAdd, setExtraItemsToAdd] = useState([]); // вещи, которые нужно добавить после текущей (очередь)
@@ -1788,18 +1817,22 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     : null;
   const color = COLORS.find((c) => c.id === colorId);
 
-  // Применяет результат распознавания одной вещи к форме (категория/тип/цвет, либо подсказка про новый вариант)
+  // Применяет результат распознавания одной вещи к форме (категория/тип/цвет, либо подсказка про новый вариант).
+  // Новые типы/цвета, которых нет в списках, НЕ добавляются автоматически — только показываются
+  // как информационная подсказка (recognizeSuggestion), пользователь добавляет их в код вручную.
   function applyRecognizedItem(result) {
     if (result.categoryId) setCategoryId(result.categoryId);
     if (result.subcategory) {
       setSubcategory(result.subcategory);
     } else if (result.suggestedNewSubcategory) {
       setRecognizeSuggestion({ type: "subcategory", label: result.suggestedNewSubcategory, categoryId: result.categoryId });
+      setPendingAiSuggestion(`Тип: ${result.suggestedNewSubcategory}`);
     }
     if (result.colorId) {
       setColorId(result.colorId);
     } else if (result.suggestedNewColorLabel) {
       setRecognizeSuggestion((prev) => prev || { type: "color", label: result.suggestedNewColorLabel });
+      setPendingAiSuggestion((prev) => prev || `Цвет: ${result.suggestedNewColorLabel}`);
     }
     // Сезон/теплоту AI определяет сам по виду вещи — пользователь раньше часто забывал его выставлять
     if (result.seasonId) setSeasonId(result.seasonId);
@@ -1987,6 +2020,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
     setSize("");
     setPrice("");
     setRecognizeSuggestion(null);
+    setPendingAiSuggestion(null);
     setIsSubmitting(false);
     // фото оставляем — следующая вещь распознаётся с того же снимка
   }
@@ -2005,6 +2039,7 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
       silhouetteId,
       lengthId,
       styleId,
+      aiSuggestion: pendingAiSuggestion, // подсказка AI про новый тип/цвет, не входящий в списки — чисто информационная, хранится при вещи
       photos,
       photo: photos[0] || null, // для обратной совместимости с местами, где используется одно фото
       name: name.trim(),
@@ -2292,40 +2327,24 @@ function AddItemSheet({ onClose, onAdd, onSave, editItem }) {
               </p>
             )}
 
+            {/* AI предложил тип/цвет, которого нет в списке. Автодобавление отключено —
+                это только информационная подсказка для пользователя: что AI увидел,
+                чтобы потом вручную добавить в код (CATEGORIES / COLORS). Поля формы
+                остаются незаполненными, пользователь выбирает вручную из существующих. */}
             {recognizeSuggestion && (
               <div className="mt-3 bg-[#f3e9da] rounded-xl px-3.5 py-3">
                 <p className="text-sm text-[#6b5a3f]">
-                  AI распознал «{recognizeSuggestion.label}», но такого варианта пока нет в списке.
-                  Добавить его?
+                  AI распознал {recognizeSuggestion.type === "color" ? "цвет" : "тип"} «{recognizeSuggestion.label}», но такого варианта пока нет в списке.
                 </p>
-                <div className="flex gap-2 mt-2.5">
-                  <button
-                    onClick={() => setRecognizeSuggestion(null)}
-                    className="flex-1 py-2 rounded-full text-sm border bg-[#fdfbf7] border-[#e3d8c4] text-[#5a5042]"
-                  >
-                    Нет, выбрать вручную
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (recognizeSuggestion.type === "subcategory" && recognizeSuggestion.categoryId) {
-                        setCategoryId(recognizeSuggestion.categoryId);
-                        setSubcategory(recognizeSuggestion.label);
-                        // Сохраняем новый тип постоянно — он появится в списке кнопок для будущих вещей
-                        saveCustomSubcategory(recognizeSuggestion.categoryId, recognizeSuggestion.label);
-                        setCustomSubcategoriesVersion((v) => v + 1);
-                      } else if (recognizeSuggestion.type === "color") {
-                        // Новый цвет не входит в фиксированную палитру свотчей — оставляем выбор
-                        // цвета пользователю вручную, но запоминаем предложенное название в заметке
-                        setNote((prev) => (prev ? prev : `Цвет: ${recognizeSuggestion.label}`));
-                      }
-                      setRecognizeSuggestion(null);
-                    }}
-                    className="flex-1 py-2 rounded-full text-sm"
-                    style={{ backgroundColor: "#e0563a", color: "#ffffff" }}
-                  >
-                    Добавить
-                  </button>
-                </div>
+                <p className="text-xs text-[#8a7d6a] mt-1.5">
+                  Выберите вручную ближайший подходящий вариант ниже. Если хотите, чтобы «{recognizeSuggestion.label}» появился в списке постоянно — добавьте его в код приложения.
+                </p>
+                <button
+                  onClick={() => setRecognizeSuggestion(null)}
+                  className="mt-2.5 w-full py-2 rounded-full text-sm border bg-[#fdfbf7] border-[#e3d8c4] text-[#5a5042]"
+                >
+                  Понятно
+                </button>
               </div>
             )}
           </div>
