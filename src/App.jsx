@@ -19,7 +19,7 @@ const CATEGORIES = [
     label: "Верх",
     shortLabel: "Верх",
     icon: Shirt,
-    sub: ["Футболка", "Майка / топ", "Рубашка", "Блузка", "Водолазка", "Лонгслив", "Свитер / джемпер", "Кардиган", "Жилет"],
+    sub: ["Футболка", "Майка / топ", "Рубашка", "Блузка", "Водолазка", "Лонгслив", "Свитер / джемпер", "Жилет"],
   },
   {
     id: "bottoms",
@@ -45,6 +45,7 @@ const CATEGORIES = [
       "Джинсовая куртка",
       "Пиджак",
       "Жакет",
+      "Кардиган",
       "Накидка",
       "Утеплённый жилет",
       "Пальто",
@@ -578,6 +579,9 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   }
 
   let outerwearPool = usable("outerwear");
+  // Намеренно нет ветки для warmthLevel === "none": при такой тёплой погоде
+  // needsOuterwear всегда false (см. выше), поэтому outerwearPool в этом случае
+  // никогда не используется для заполнения outfit.outerwear — фильтр не нужен.
   if (warmthLevel === "heavy") {
     outerwearPool = outerwearPool.filter((o) =>
       ["Пуховик", "Пальто"].includes(o.subcategory)
@@ -588,7 +592,7 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
     );
   } else if (warmthLevel === "light") {
     outerwearPool = outerwearPool.filter((o) =>
-      ["Джинсовая куртка", "Жакет", "Пиджак", "Накидка", "Утеплённый жилет", "Плащ"].includes(o.subcategory)
+      ["Джинсовая куртка", "Жакет", "Пиджак", "Кардиган", "Накидка", "Утеплённый жилет", "Плащ"].includes(o.subcategory)
     );
   }
 
@@ -638,7 +642,8 @@ function pickOutfit(items, { temp, rain, dayType, scenario, pinnedItems = [] }) 
   // мягкое правило: используется только когда выбор есть, не оставляет слот пустым.
   const STYLE_CONFLICTS = {
     business: ["sporty"],
-    sporty: ["business", "romantic"],
+    classic: ["sporty"],
+    sporty: ["business", "classic", "romantic"],
     romantic: ["sporty"],
   };
 
@@ -726,11 +731,20 @@ function pickEveningLayer(items, { currentTemp, coldestLater, outfit, dayType })
     pool = pool.filter((o) => ["Куртка", "Пальто", "Жакет", "Пиджак", "Утеплённый жилет"].includes(o.subcategory));
   } else if (eveningWarmth === "light") {
     pool = pool.filter((o) =>
-      ["Джинсовая куртка", "Жакет", "Пиджак", "Накидка", "Утеплённый жилет", "Плащ"].includes(o.subcategory)
+      ["Джинсовая куртка", "Жакет", "Пиджак", "Кардиган", "Накидка", "Утеплённый жилет", "Плащ"].includes(o.subcategory)
     );
+  } else {
+    // eveningWarmth === "none" — вечером всё ещё тепло (от 18°C и выше), даже после
+    // похолодания. Тёплые вещи (пуховик, пальто, утеплённый жилет) тут не нужны —
+    // самое большее, что может понадобиться — лёгкая накидка на случай ветра.
+    pool = pool.filter((o) => ["Накидка", "Джинсовая куртка"].includes(o.subcategory));
   }
-  // already in the outfit — не предлагаем то же самое повторно
-  if (outfit?.outerwear) pool = pool.filter((o) => o.id !== outfit.outerwear.id);
+  // already in the outfit — не предлагаем то же самое повторно, и не предлагаем вторую
+  // верхнюю вещь того же типа (например кардиган, если в образе уже кардиган) — то, что
+  // уже надето, закрывает потребность в этом уровне теплоты на вечер тоже.
+  if (outfit?.outerwear) {
+    pool = pool.filter((o) => o.id !== outfit.outerwear.id && o.subcategory !== outfit.outerwear.subcategory);
+  }
 
   if (pool.length === 0) return null;
 
